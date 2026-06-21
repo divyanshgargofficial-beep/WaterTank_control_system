@@ -1,17 +1,35 @@
-# water_tank_controller
+# Water Tank Controller
 
-A new Flutter project.
+Premium Flutter Android client for the existing ESP8266 firmware in `WaterTankController_Package1.ino`.
 
-## Getting Started
+## Firmware API Contract
 
-This project is a starting point for a Flutter application.
+The app uses only endpoints implemented by the firmware:
 
-A few resources to get you started if this is your first Flutter project:
+- `GET /api/status`
+- `POST /api/pump/on`
+- `POST /api/pump/off`
+- `POST /api/pump/reset`
 
-- [Learn Flutter](https://docs.flutter.dev/get-started/learn-flutter)
-- [Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Flutter learning resources](https://docs.flutter.dev/reference/learning-resources)
+Default controller IP: `192.168.1.13`.
 
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+Status JSON fields:
+
+- `pumpRunning`
+- `tankFull`
+- `lockout`
+- `currentRuntimeSeconds`
+- `totalRuntimeSeconds`
+- `wifiConnected`
+
+## Flutter Structure
+
+- `lib/core` constants and design tokens
+- `lib/models` firmware and app state models
+- `lib/services` Dio API and local notifications
+- `lib/repositories` persistence and controller repositories
+- `lib/providers` Riverpod state controllers
+- `lib/screens` dashboard, control, history, statistics, settings
+- `lib/widgets` reusable glass UI components
+- `lib/theme` Material 3 dark theme
+- `lib/utils` formatting helpers
