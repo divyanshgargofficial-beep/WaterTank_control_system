@@ -89,9 +89,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 leading: const Icon(Icons.sync_rounded),
               ),
               Slider(
-                min: 1,
-                max: 10,
-                divisions: 9,
+                min: 3,
+                max: 15,
+                divisions: 12,
                 value: settings.refreshIntervalSeconds.toDouble(),
                 label: '${settings.refreshIntervalSeconds}s',
                 onChanged: (value) => _save(

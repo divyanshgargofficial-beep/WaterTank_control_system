@@ -11,7 +11,7 @@ class AppSettings {
   factory AppSettings.defaults() {
     return const AppSettings(
       controllerIp: FirmwareContract.defaultControllerIp,
-      refreshIntervalSeconds: 2,
+      refreshIntervalSeconds: 3,
       notificationsEnabled: true,
       highContrast: false,
     );

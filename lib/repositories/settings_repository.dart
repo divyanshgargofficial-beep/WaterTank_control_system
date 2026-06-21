@@ -16,7 +16,10 @@ class SettingsRepository {
     return AppSettings(
       controllerIp: _prefs.getString(_ipKey) ?? defaults.controllerIp,
       refreshIntervalSeconds:
-          _prefs.getInt(_refreshKey) ?? defaults.refreshIntervalSeconds,
+          (_prefs.getInt(_refreshKey) ?? defaults.refreshIntervalSeconds).clamp(
+            3,
+            15,
+          ),
       notificationsEnabled:
           _prefs.getBool(_notificationsKey) ?? defaults.notificationsEnabled,
       highContrast: _prefs.getBool(_contrastKey) ?? defaults.highContrast,
@@ -25,7 +28,10 @@ class SettingsRepository {
 
   Future<void> save(AppSettings settings) async {
     await _prefs.setString(_ipKey, settings.controllerIp.trim());
-    await _prefs.setInt(_refreshKey, settings.refreshIntervalSeconds);
+    await _prefs.setInt(
+      _refreshKey,
+      settings.refreshIntervalSeconds.clamp(3, 15),
+    );
     await _prefs.setBool(_notificationsKey, settings.notificationsEnabled);
     await _prefs.setBool(_contrastKey, settings.highContrast);
   }
