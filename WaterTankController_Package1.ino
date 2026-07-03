@@ -16,6 +16,7 @@ const char* deviceId = "package-1";
 const char* deviceName = "Home Water Tank";
 const char* deviceToken = "replace-with-device-token";
 const char* cloudBaseUrl = "https://water-tank-cloud-backend.onrender.com";
+const char* cloudHost = "water-tank-cloud-backend.onrender.com";
 
 IPAddress local_IP(192,168,1,13);
 IPAddress gateway(192,168,1,1);
@@ -195,6 +196,30 @@ void addCloudHeaders(HTTPClient& http)
   http.addHeader("X-Device-Token", deviceToken);
 }
 
+void logCloudHttpDiagnostics(String label, String url)
+{
+  IPAddress resolvedIp;
+  bool resolved = WiFi.hostByName(cloudHost, resolvedIp);
+  cloudLog(label + " url=" + url);
+  cloudLog(label + " wifi localIP=" + WiFi.localIP().toString()
+           + " gateway=" + WiFi.gatewayIP().toString()
+           + " dns=" + WiFi.dnsIP().toString()
+           + " rssi=" + String(WiFi.RSSI()));
+  cloudLog(label + " dns host=" + String(cloudHost)
+           + " resolved=" + String(resolved ? "true" : "false")
+           + " ip=" + (resolved ? resolvedIp.toString() : String("0.0.0.0")));
+  cloudLog(label + " freeHeap=" + String(ESP.getFreeHeap()));
+  cloudLog(label + " WiFiClientSecure=global cloudClient reused=true");
+}
+
+void logCloudHttpResult(String label, HTTPClient& http, int status)
+{
+  if(status < 0)
+  {
+    cloudLog(label + " error=" + http.errorToString(status));
+  }
+}
+
 String extractJsonValue(String json, String key)
 {
   String needle = "\"" + key + "\":\"";
@@ -217,7 +242,10 @@ void ackCloudCommand(String commandId, bool success, String message)
   HTTPClient http;
   String url = String(cloudBaseUrl) + "/device/ack";
   cloudLog("POST " + url + " commandId=" + commandId + " success=" + String(success ? "true" : "false"));
-  if(!http.begin(cloudClient, url))
+  logCloudHttpDiagnostics("ACK", url);
+  bool began = http.begin(cloudClient, url);
+  cloudLog("ACK begin=" + String(began ? "true" : "false"));
+  if(!began)
   {
     cloudLog("ack begin failed");
     return;
@@ -232,6 +260,7 @@ void ackCloudCommand(String commandId, bool success, String message)
   int code = http.POST(body);
   String response = http.getString();
   cloudLog("ACK status=" + String(code) + " response=" + response);
+  logCloudHttpResult("ACK", http, code);
   http.end();
   if(code >= 200 && code < 300) markCloudSuccess();
   else markCloudFailure();
@@ -295,7 +324,10 @@ void pollCloudCommand()
   HTTPClient http;
   String url = String(cloudBaseUrl) + "/device/command?deviceId=" + String(deviceId);
   cloudLog("GET " + url);
-  if(!http.begin(cloudClient, url))
+  logCloudHttpDiagnostics("COMMAND", url);
+  bool began = http.begin(cloudClient, url);
+  cloudLog("COMMAND begin=" + String(began ? "true" : "false"));
+  if(!began)
   {
     cloudLog("command begin failed");
     markCloudFailure();
@@ -305,6 +337,7 @@ void pollCloudCommand()
   int code = http.GET();
   String response = http.getString();
   cloudLog("COMMAND status=" + String(code) + " response=" + response);
+  logCloudHttpResult("COMMAND", http, code);
   if(code >= 200 && code < 300)
   {
     markCloudSuccess();
@@ -331,7 +364,10 @@ void postCloudStatus()
   String url = String(cloudBaseUrl) + "/device/status";
   String body = cloudStatusJson();
   cloudLog("POST " + url + " body=" + body);
-  if(!http.begin(cloudClient, url))
+  logCloudHttpDiagnostics("STATUS", url);
+  bool began = http.begin(cloudClient, url);
+  cloudLog("STATUS begin=" + String(began ? "true" : "false"));
+  if(!began)
   {
     cloudLog("status begin failed");
     markCloudFailure();
@@ -341,6 +377,7 @@ void postCloudStatus()
   int code = http.POST(body);
   String response = http.getString();
   cloudLog("STATUS status=" + String(code) + " response=" + response);
+  logCloudHttpResult("STATUS", http, code);
   if(code >= 200 && code < 300) markCloudSuccess();
   else markCloudFailure();
   http.end();
