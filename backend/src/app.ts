@@ -6,6 +6,7 @@ import morgan from 'morgan';
 import { env } from './config/env.js';
 import { appRoutes } from './routes/appRoutes.js';
 import { authRoutes } from './routes/authRoutes.js';
+import { prisma } from './config/prisma.js';
 import { deviceRoutes } from './routes/deviceRoutes.js';
 import { errorHandler, notFound } from './middleware/errorHandler.js';
 
@@ -20,6 +21,15 @@ export function createApp() {
 
   app.get('/health', (_req, res) => {
     res.json({ ok: true, service: 'water-tank-cloud-backend' });
+  });
+
+  app.get('/health/db', async (_req, res, next) => {
+    try {
+      await prisma.$queryRaw`SELECT 1`;
+      res.json({ ok: true, database: 'connected' });
+    } catch (error) {
+      next(error);
+    }
   });
 
   app.use('/auth', authRoutes);
