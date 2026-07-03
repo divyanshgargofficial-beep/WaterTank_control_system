@@ -16,7 +16,7 @@ class AppSettings {
   factory AppSettings.defaults() {
     return const AppSettings(
       controllerIp: FirmwareContract.defaultControllerIp,
-      cloudUrl: 'http://10.0.2.2:8080',
+      cloudUrl: 'https://water-tank-cloud-backend.onrender.com',
       refreshIntervalSeconds: 3,
       notificationsEnabled: true,
       adminNotificationsEnabled: true,

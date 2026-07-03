@@ -15,7 +15,7 @@ const char* firmwareVersion = "1.1.0-cloud";
 const char* deviceId = "package-1";
 const char* deviceName = "Home Water Tank";
 const char* deviceToken = "replace-with-device-token";
-const char* cloudBaseUrl = "https://your-water-tank-backend.railway.app";
+const char* cloudBaseUrl = "https://water-tank-cloud-backend.onrender.com";
 
 IPAddress local_IP(192,168,1,13);
 IPAddress gateway(192,168,1,1);
