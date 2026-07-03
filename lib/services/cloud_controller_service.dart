@@ -73,7 +73,42 @@ class CloudControllerService implements ControllerService {
     if (response.statusCode != 200 || response.data?['success'] != true) {
       throw StateError('Cloud rejected the command.');
     }
+    final commandId = response.data?['commandId'];
+    if (commandId is! String || commandId.isEmpty) {
+      throw StateError('Cloud did not return a command id.');
+    }
+    await _waitForCommandResult(commandId, label: label);
     await _waitForStatus(label: label, expected: expected);
+  }
+
+  Future<void> _waitForCommandResult(
+    String commandId, {
+    required String label,
+  }) async {
+    const attempts = 12;
+    const delay = Duration(milliseconds: 700);
+    for (var attempt = 1; attempt <= attempts; attempt++) {
+      await Future<void>.delayed(delay);
+      final response = await _dio.get<Map<String, dynamic>>(
+        '${_normalizeBaseUrl(endpoint)}/app/command/$commandId',
+        options: await _options(validateStatus: (status) => status == 200),
+      );
+      final status = '${response.data?['status'] ?? ''}';
+      final error = '${response.data?['error'] ?? ''}';
+      final device = response.data?['device'];
+      final lockout = device is Map && device['lockout'] == true;
+      debugPrint(
+        '[CloudController] command $label id=$commandId attempt=$attempt status=$status error=$error lockout=$lockout',
+      );
+      if (status == 'ACKED') return;
+      if (status == 'FAILED') {
+        if (error.toLowerCase().contains('lockout') || lockout) {
+          throw const ControllerLockoutException();
+        }
+        throw StateError('Cloud command rejected by controller: $error');
+      }
+    }
+    throw StateError('Cloud command was delivered but not acknowledged.');
   }
 
   Future<void> _waitForStatus({

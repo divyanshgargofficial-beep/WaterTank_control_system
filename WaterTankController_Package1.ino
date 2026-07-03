@@ -246,6 +246,7 @@ void executeCloudCommand(String commandId, String command)
     {
       cloudLog("PUMP_ON blocked by lockout");
       ackCloudCommand(commandId, false, "lockout");
+      forceCloudStatusUpload = true;
       return;
     }
     tankFull = false;

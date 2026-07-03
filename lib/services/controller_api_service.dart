@@ -87,4 +87,13 @@ class ControllerApiService {
   }
 }
 
-class ControllerLockoutException implements Exception {}
+class ControllerLockoutException implements Exception {
+  const ControllerLockoutException([
+    this.message = 'Pump start rejected: controller is locked out.',
+  ]);
+
+  final String message;
+
+  @override
+  String toString() => message;
+}

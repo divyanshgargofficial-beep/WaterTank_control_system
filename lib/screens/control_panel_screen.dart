@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:water_tank_controller/core/app_colors.dart';
 import 'package:water_tank_controller/providers/app_providers.dart';
+import 'package:water_tank_controller/services/controller_api_service.dart';
 import 'package:water_tank_controller/widgets/glass_card.dart';
 import 'package:water_tank_controller/widgets/runtime_display.dart';
 
@@ -142,11 +143,16 @@ class _ControlPanelScreenState extends ConsumerState<ControlPanelScreen> {
       if (mounted) {
         ScaffoldMessenger.of(
           context,
-        ).showSnackBar(SnackBar(content: Text('Command failed: $error')));
+        ).showSnackBar(SnackBar(content: Text(_commandErrorMessage(error))));
       }
     } finally {
       if (mounted) setState(() => _busy = false);
     }
+  }
+
+  String _commandErrorMessage(Object error) {
+    if (error is ControllerLockoutException) return error.message;
+    return 'Command failed: $error';
   }
 }
 

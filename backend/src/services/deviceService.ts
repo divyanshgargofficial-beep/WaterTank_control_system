@@ -198,6 +198,35 @@ export async function queueCommand(type: CommandType, userId: string, requestedD
   });
 }
 
+export async function getCommandForApp(commandId: string, userId: string) {
+  return prisma.command.findFirst({
+    where: {
+      id: commandId,
+      requestedBy: userId
+    },
+    select: {
+      id: true,
+      type: true,
+      status: true,
+      error: true,
+      deliveredAt: true,
+      ackedAt: true,
+      createdAt: true,
+      device: {
+        select: {
+          deviceId: true,
+          pumpRunning: true,
+          tankFull: true,
+          lockout: true,
+          runtime: true,
+          totalRuntime: true,
+          lastSeen: true
+        }
+      }
+    }
+  });
+}
+
 export async function getCurrentDevice() {
   return ensureDefaultDevice();
 }

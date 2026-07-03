@@ -31,6 +31,25 @@ export async function status(_req: Request, res: Response) {
   res.json(await deviceService.getAppStatus());
 }
 
+export async function command(req: Request, res: Response) {
+  const commandId = `${req.params.commandId}`;
+  console.log('[AppCommand] status request', { userId: req.user!.id, commandId });
+  const command = await deviceService.getCommandForApp(commandId, req.user!.id);
+  if (!command) {
+    return res.status(404).json({ error: 'Command not found' });
+  }
+  console.log('[AppCommand] status response', {
+    commandId: command.id,
+    type: command.type,
+    status: command.status,
+    error: command.error,
+    deviceId: command.device.deviceId,
+    pumpRunning: command.device.pumpRunning,
+    lockout: command.device.lockout
+  });
+  res.json(command);
+}
+
 export async function history(_req: Request, res: Response) {
   const device = await deviceService.getCurrentDevice();
   const rows = await prisma.history.findMany({
