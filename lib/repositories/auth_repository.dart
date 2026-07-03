@@ -12,6 +12,7 @@ class AuthRepository {
 
   static const _usersKey = 'auth.users.v1';
   static const _activeUserKey = 'auth.activeUserId.v1';
+  static const _cloudTokenKey = 'auth.cloudToken.v1';
 
   Future<AuthSession?> restoreSession() async {
     await _ensureDefaults();
@@ -43,7 +44,22 @@ class AuthRepository {
     return AuthSession(user: record.user);
   }
 
-  Future<void> logout() => _storage.delete(key: _activeUserKey);
+  Future<void> logout() async {
+    await _storage.delete(key: _activeUserKey);
+    await clearCloudToken();
+  }
+
+  Future<void> saveCloudToken(String token) {
+    return _storage.write(key: _cloudTokenKey, value: token);
+  }
+
+  Future<String?> readCloudToken() {
+    return _storage.read(key: _cloudTokenKey);
+  }
+
+  Future<void> clearCloudToken() {
+    return _storage.delete(key: _cloudTokenKey);
+  }
 
   Future<void> changePassword(String userId, String password) async {
     final records = await _loadRecords();

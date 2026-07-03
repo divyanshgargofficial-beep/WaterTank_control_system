@@ -14,9 +14,10 @@ class ControllerReadResult {
 }
 
 class ConnectionManager {
-  ConnectionManager(this._api);
+  ConnectionManager(this._api, this._cloudFactory);
 
   final ControllerApiService _api;
+  final CloudControllerService Function(String cloudUrl) _cloudFactory;
   ConnectionMode? _lastMode;
 
   Future<ControllerReadResult> fetchStatus(AppSettings settings) async {
@@ -34,7 +35,7 @@ class ConnectionManager {
         ),
       );
     } catch (_) {
-      final cloud = CloudControllerService(_api, settings.cloudUrl);
+      final cloud = _cloudFactory(settings.cloudUrl);
       final started = DateTime.now();
       final status = await cloud.fetchStatus();
       return ControllerReadResult(
@@ -56,7 +57,7 @@ class ConnectionManager {
 
   ControllerService _active(AppSettings settings) {
     return switch (_lastMode) {
-      ConnectionMode.cloud => CloudControllerService(_api, settings.cloudUrl),
+      ConnectionMode.cloud => _cloudFactory(settings.cloudUrl),
       _ => LocalControllerService(_api, settings.controllerIp),
     };
   }

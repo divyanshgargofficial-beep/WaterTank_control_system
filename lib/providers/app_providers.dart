@@ -18,6 +18,8 @@ import 'package:water_tank_controller/repositories/history_repository.dart';
 import 'package:water_tank_controller/repositories/settings_repository.dart';
 import 'package:water_tank_controller/services/connection_manager.dart';
 import 'package:water_tank_controller/services/controller_api_service.dart';
+import 'package:water_tank_controller/services/cloud_auth_service.dart';
+import 'package:water_tank_controller/services/cloud_controller_service.dart';
 import 'package:water_tank_controller/services/notification_service.dart';
 
 final sharedPreferencesProvider = Provider<SharedPreferences>(
@@ -47,8 +49,18 @@ final dioProvider = Provider((ref) {
 final apiServiceProvider = Provider(
   (ref) => ControllerApiService(ref.watch(dioProvider)),
 );
+final cloudAuthServiceProvider = Provider(
+  (ref) => CloudAuthService(ref.watch(dioProvider)),
+);
 final connectionManagerProvider = Provider(
-  (ref) => ConnectionManager(ref.watch(apiServiceProvider)),
+  (ref) => ConnectionManager(
+    ref.watch(apiServiceProvider),
+    (cloudUrl) => CloudControllerService(
+      ref.watch(dioProvider),
+      cloudUrl,
+      () => ref.read(authRepositoryProvider).readCloudToken(),
+    ),
+  ),
 );
 final authRepositoryProvider = Provider(
   (ref) => AuthRepository(ref.watch(secureStorageProvider)),
@@ -110,6 +122,7 @@ class AuthController extends Notifier<AuthState> {
       final session = await ref
           .read(authRepositoryProvider)
           .login(userId, password);
+      await _tryCloudLogin(session.user, password);
       final users = await ref.read(authRepositoryProvider).loadUsers();
       state = AuthState(loading: false, users: users, session: session);
     } catch (error) {
@@ -119,6 +132,26 @@ class AuthController extends Notifier<AuthState> {
         users: users,
         errorMessage: error.toString(),
       );
+    }
+  }
+
+  Future<void> _tryCloudLogin(AppUser user, String password) async {
+    final email = switch (user.role) {
+      UserRole.administrator => 'admin@example.com',
+      UserRole.familyMember => 'family@example.com',
+    };
+    try {
+      final token = await ref
+          .read(cloudAuthServiceProvider)
+          .login(
+            baseUrl: ref.read(settingsControllerProvider).cloudUrl,
+            email: email,
+            password: password,
+          );
+      await ref.read(authRepositoryProvider).saveCloudToken(token);
+    } catch (error) {
+      debugPrint('[CloudAuth] login skipped/failed: $error');
+      await ref.read(authRepositoryProvider).clearCloudToken();
     }
   }
 
