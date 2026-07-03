@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 import 'package:water_tank_controller/core/app_colors.dart';
+import 'package:water_tank_controller/models/app_user.dart';
+import 'package:water_tank_controller/models/connection_info.dart';
 import 'package:water_tank_controller/providers/app_providers.dart';
 import 'package:water_tank_controller/widgets/glass_card.dart';
 import 'package:water_tank_controller/widgets/runtime_display.dart';
@@ -13,8 +15,10 @@ class DashboardScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final settings = ref.watch(settingsControllerProvider);
+    final user = ref.watch(authControllerProvider).session!.user;
     final snapshot = ref.watch(controllerControllerProvider);
     final status = snapshot.status;
+    final connection = snapshot.connection;
     final updated = status == null
         ? 'Never'
         : DateFormat('MMM d, h:mm:ss a').format(status.receivedAt);
@@ -38,7 +42,7 @@ class DashboardScreen extends ConsumerWidget {
                     ),
                     const SizedBox(height: 6),
                     Text(
-                      settings.controllerIp,
+                      '${user.role.label} - ${connection?.mode.label ?? 'Connecting'}',
                       style: const TextStyle(color: AppColors.muted),
                     ),
                   ],
@@ -55,6 +59,13 @@ class DashboardScreen extends ConsumerWidget {
                         child: CircularProgressIndicator(strokeWidth: 2),
                       )
                     : const Icon(Icons.sync_rounded),
+              ),
+              const SizedBox(width: 8),
+              IconButton.filledTonal(
+                tooltip: 'Sign out',
+                onPressed: () =>
+                    ref.read(authControllerProvider.notifier).logout(),
+                icon: const Icon(Icons.logout_rounded),
               ),
             ],
           ),
@@ -89,13 +100,25 @@ class DashboardScreen extends ConsumerWidget {
                   runSpacing: 10,
                   children: [
                     StatusPill(
-                      label: snapshot.online ? 'Online' : 'Offline',
+                      label: snapshot.online
+                          ? connection?.mode.label ?? 'Online'
+                          : 'Offline',
                       color: snapshot.online
                           ? AppColors.success
                           : AppColors.warning,
                       icon: snapshot.online
                           ? Icons.cloud_done_rounded
                           : Icons.cloud_off_rounded,
+                      pulse: snapshot.online,
+                    ),
+                    StatusPill(
+                      label: connection == null
+                          ? 'Quality Unknown'
+                          : '${connection.qualityLabel} ${connection.qualityPercent}%',
+                      color: connection == null
+                          ? AppColors.muted
+                          : AppColors.secondary,
+                      icon: Icons.network_check_rounded,
                       pulse: snapshot.online,
                     ),
                     StatusPill(
@@ -149,6 +172,20 @@ class DashboardScreen extends ConsumerWidget {
                 ),
                 const SizedBox(height: 20),
                 _InfoRow(
+                  label: 'Connection Mode',
+                  value: connection?.mode.label ?? 'Detecting',
+                ),
+                _InfoRow(
+                  label: 'Connection Quality',
+                  value: connection == null
+                      ? 'Unknown'
+                      : '${connection.qualityLabel} (${connection.qualityPercent}%)',
+                ),
+                _InfoRow(
+                  label: 'Controller Online',
+                  value: snapshot.online ? 'Yes' : 'No',
+                ),
+                _InfoRow(
                   label: 'Live Sync',
                   value: snapshot.syncing
                       ? 'Syncing'
@@ -163,6 +200,8 @@ class DashboardScreen extends ConsumerWidget {
                       ? 'Connected'
                       : 'Unknown',
                 ),
+                _InfoRow(label: 'Local IP', value: settings.controllerIp),
+                _InfoRow(label: 'Cloud URL', value: settings.cloudUrl),
               ],
             ),
           ),

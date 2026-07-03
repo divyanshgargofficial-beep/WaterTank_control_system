@@ -3,14 +3,20 @@ import 'dart:async';
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:water_tank_controller/models/app_settings.dart';
+import 'package:water_tank_controller/models/app_user.dart';
+import 'package:water_tank_controller/models/auth_state.dart';
 import 'package:water_tank_controller/models/controller_snapshot.dart';
 import 'package:water_tank_controller/models/controller_status.dart';
 import 'package:water_tank_controller/models/history_event.dart';
+import 'package:water_tank_controller/models/notification_preferences.dart';
+import 'package:water_tank_controller/repositories/auth_repository.dart';
 import 'package:water_tank_controller/repositories/controller_repository.dart';
 import 'package:water_tank_controller/repositories/history_repository.dart';
 import 'package:water_tank_controller/repositories/settings_repository.dart';
+import 'package:water_tank_controller/services/connection_manager.dart';
 import 'package:water_tank_controller/services/controller_api_service.dart';
 import 'package:water_tank_controller/services/notification_service.dart';
 
@@ -20,12 +26,17 @@ final sharedPreferencesProvider = Provider<SharedPreferences>(
 final notificationServiceProvider = Provider<NotificationService>(
   (ref) => throw UnimplementedError(),
 );
+final secureStorageProvider = Provider<FlutterSecureStorage>(
+  (ref) => const FlutterSecureStorage(),
+);
 final dioProvider = Provider((ref) {
+  final settings = ref.watch(settingsControllerProvider);
+  final timeout = Duration(seconds: settings.connectionTimeoutSeconds);
   return Dio(
     BaseOptions(
-      connectTimeout: const Duration(seconds: 5),
-      receiveTimeout: const Duration(seconds: 5),
-      sendTimeout: const Duration(seconds: 5),
+      connectTimeout: timeout,
+      receiveTimeout: timeout,
+      sendTimeout: timeout,
       headers: const {
         Headers.acceptHeader: 'application/json',
         'connection': 'close',
@@ -36,6 +47,12 @@ final dioProvider = Provider((ref) {
 final apiServiceProvider = Provider(
   (ref) => ControllerApiService(ref.watch(dioProvider)),
 );
+final connectionManagerProvider = Provider(
+  (ref) => ConnectionManager(ref.watch(apiServiceProvider)),
+);
+final authRepositoryProvider = Provider(
+  (ref) => AuthRepository(ref.watch(secureStorageProvider)),
+);
 final settingsRepositoryProvider = Provider(
   (ref) => SettingsRepository(ref.watch(sharedPreferencesProvider)),
 );
@@ -44,11 +61,14 @@ final historyRepositoryProvider = Provider(
 );
 final controllerRepositoryProvider = Provider(
   (ref) => ControllerRepository(
-    ref.watch(apiServiceProvider),
+    ref.watch(connectionManagerProvider),
     ref.watch(sharedPreferencesProvider),
   ),
 );
 
+final authControllerProvider = NotifierProvider<AuthController, AuthState>(
+  AuthController.new,
+);
 final settingsControllerProvider =
     NotifierProvider<SettingsController, AppSettings>(SettingsController.new);
 final historyControllerProvider =
@@ -67,6 +87,69 @@ class SettingsController extends Notifier<AppSettings> {
   Future<void> update(AppSettings settings) async {
     state = settings;
     await ref.read(settingsRepositoryProvider).save(settings);
+  }
+}
+
+class AuthController extends Notifier<AuthState> {
+  @override
+  AuthState build() {
+    unawaited(_restore());
+    return const AuthState.loading();
+  }
+
+  Future<void> _restore() async {
+    final repository = ref.read(authRepositoryProvider);
+    final session = await repository.restoreSession();
+    final users = await repository.loadUsers();
+    state = AuthState(loading: false, users: users, session: session);
+  }
+
+  Future<void> login(String userId, String password) async {
+    state = state.copyWith(loading: true, clearError: true);
+    try {
+      final session = await ref
+          .read(authRepositoryProvider)
+          .login(userId, password);
+      final users = await ref.read(authRepositoryProvider).loadUsers();
+      state = AuthState(loading: false, users: users, session: session);
+    } catch (error) {
+      final users = await ref.read(authRepositoryProvider).loadUsers();
+      state = AuthState(
+        loading: false,
+        users: users,
+        errorMessage: error.toString(),
+      );
+    }
+  }
+
+  Future<void> logout() async {
+    await ref.read(authRepositoryProvider).logout();
+    final users = await ref.read(authRepositoryProvider).loadUsers();
+    state = AuthState(loading: false, users: users);
+  }
+
+  Future<void> changePassword(String userId, String password) async {
+    await ref.read(authRepositoryProvider).changePassword(userId, password);
+    final users = await ref.read(authRepositoryProvider).loadUsers();
+    state = state.copyWith(users: users);
+  }
+
+  Future<void> addUser({
+    required String name,
+    required UserRole role,
+    required String password,
+  }) async {
+    await ref
+        .read(authRepositoryProvider)
+        .addUser(name: name, role: role, password: password);
+    final users = await ref.read(authRepositoryProvider).loadUsers();
+    state = state.copyWith(users: users);
+  }
+
+  Future<void> removeUser(String userId) async {
+    await ref.read(authRepositoryProvider).removeUser(userId);
+    final users = await ref.read(authRepositoryProvider).loadUsers();
+    state = state.copyWith(users: users);
   }
 }
 
@@ -107,7 +190,12 @@ class ControllerController extends Notifier<ControllerSnapshot> {
     final cached = ref.watch(controllerRepositoryProvider).loadCachedStatus();
     _previousStatus = cached;
     unawaited(Future<void>.microtask(() => refresh(reason: 'initial')));
-    return ControllerSnapshot(status: cached, online: false, syncing: true);
+    return ControllerSnapshot(
+      status: cached,
+      online: false,
+      syncing: true,
+      connection: null,
+    );
   }
 
   void _scheduleNextPoll() {
@@ -146,14 +234,22 @@ class ControllerController extends Notifier<ControllerSnapshot> {
 
     state = state.copyWith(syncing: true, clearError: true);
     try {
-      final status = await ref
+      final result = await ref
           .read(controllerRepositoryProvider)
-          .fetchStatus(settings.controllerIp);
+          .fetchStatus(settings);
+      final status = result.status;
       if (_disposed) return;
-      debugPrint('[ControllerPolling] request success');
+      debugPrint(
+        '[ControllerPolling] request success mode=${result.connection.mode.name}',
+      );
       _consecutiveFailures = 0;
       final restored = !_wasOnline;
-      state = ControllerSnapshot(status: status, online: true, syncing: false);
+      state = ControllerSnapshot(
+        status: status,
+        online: true,
+        syncing: false,
+        connection: result.connection,
+      );
       await _recordTransitions(_previousStatus, status, restored: restored);
       _previousStatus = status;
       if (!_wasOnline) {
@@ -200,21 +296,24 @@ class ControllerController extends Notifier<ControllerSnapshot> {
   Future<void> startPump() async {
     await _runCommand(
       label: 'startPump',
-      command: (ip) => ref.read(controllerRepositoryProvider).startPump(ip),
+      command: (settings) =>
+          ref.read(controllerRepositoryProvider).startPump(settings),
     );
   }
 
   Future<void> stopPump() async {
     await _runCommand(
       label: 'stopPump',
-      command: (ip) => ref.read(controllerRepositoryProvider).stopPump(ip),
+      command: (settings) =>
+          ref.read(controllerRepositoryProvider).stopPump(settings),
     );
   }
 
   Future<void> resetLockout() async {
     await _runCommand(
       label: 'resetLockout',
-      command: (ip) => ref.read(controllerRepositoryProvider).resetLockout(ip),
+      command: (settings) =>
+          ref.read(controllerRepositoryProvider).resetLockout(settings),
     );
     await _addEvent(
       HistoryEventType.lockoutReset,
@@ -226,14 +325,14 @@ class ControllerController extends Notifier<ControllerSnapshot> {
 
   Future<void> _runCommand({
     required String label,
-    required Future<void> Function(String ip) command,
+    required Future<void> Function(AppSettings settings) command,
   }) async {
     _timer?.cancel();
     _commandInFlight = true;
     debugPrint('[ControllerPolling] command start $label');
     try {
       await _waitForIdleStatusRequest();
-      await command(ref.read(settingsControllerProvider).controllerIp);
+      await command(ref.read(settingsControllerProvider));
       debugPrint('[ControllerPolling] command success $label');
     } catch (error) {
       debugPrint('[ControllerPolling] command failure $label error=$error');
@@ -328,8 +427,19 @@ class ControllerController extends Notifier<ControllerSnapshot> {
           id: type.index,
           title: title,
           body: body,
-          enabled: ref.read(settingsControllerProvider).notificationsEnabled,
+          enabled: _notificationsAllowed(type),
         );
+  }
+
+  bool _notificationsAllowed(HistoryEventType type) {
+    final settings = ref.read(settingsControllerProvider);
+    final user = ref.read(authControllerProvider).session?.user;
+    final role = user?.role ?? UserRole.administrator;
+    return NotificationPreferences(
+      masterEnabled: settings.notificationsEnabled,
+      adminEnabled: settings.adminNotificationsEnabled,
+      familyEnabled: settings.familyNotificationsEnabled,
+    ).allows(role, type);
   }
 
   String _friendlyError(Object error) {

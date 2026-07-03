@@ -33,10 +33,12 @@ dependencies:
 
   cupertino_icons: ^1.0.8
   animations: ^2.0.11
+  crypto: ^3.0.6
   dio: ^5.9.0
   fl_chart: ^1.1.1
   flutter_local_notifications: ^19.5.0
   flutter_riverpod: ^3.0.3
+  flutter_secure_storage: ^10.0.0-beta.4
   google_fonts: ^6.3.2
   intl: ^0.20.2
   shared_preferences: ^2.5.3

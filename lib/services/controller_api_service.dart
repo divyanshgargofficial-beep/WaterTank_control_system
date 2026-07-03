@@ -9,10 +9,8 @@ class ControllerApiService {
   final Dio _dio;
   static const _retryDelay = Duration(milliseconds: 450);
 
-  String _baseUrl(String ip) => 'http://$ip';
-
-  Future<ControllerStatus> fetchStatus(String ip) async {
-    final response = await _getStatusWithSingleRetry(ip);
+  Future<ControllerStatus> fetchStatus(String baseUrl) async {
+    final response = await _getStatusWithSingleRetry(baseUrl);
     final data = response.data;
     if (data == null) {
       throw StateError('Controller returned an empty status response.');
@@ -21,26 +19,26 @@ class ControllerApiService {
   }
 
   Future<Response<Map<String, dynamic>>> _getStatusWithSingleRetry(
-    String ip,
+    String baseUrl,
   ) async {
     try {
-      return await _getStatus(ip, attempt: 1);
+      return await _getStatus(baseUrl, attempt: 1);
     } on DioException catch (error) {
       debugPrint(
         '[ControllerApi] GET ${FirmwareContract.statusPath} attempt=1 failed type=${error.type}',
       );
       await Future<void>.delayed(_retryDelay);
-      return _getStatus(ip, attempt: 2);
+      return _getStatus(baseUrl, attempt: 2);
     }
   }
 
   Future<Response<Map<String, dynamic>>> _getStatus(
-    String ip, {
+    String baseUrl, {
     required int attempt,
   }) async {
     debugPrint('[ControllerApi] GET ${FirmwareContract.statusPath} start');
     final response = await _dio.get<Map<String, dynamic>>(
-      '${_baseUrl(ip)}${FirmwareContract.statusPath}',
+      '${_normalizeBaseUrl(baseUrl)}${FirmwareContract.statusPath}',
       options: Options(
         headers: const {'connection': 'close'},
         validateStatus: (status) => status == 200,
@@ -52,17 +50,17 @@ class ControllerApiService {
     return response;
   }
 
-  Future<void> startPump(String ip) =>
-      _postControl(ip, FirmwareContract.startPumpPath);
-  Future<void> stopPump(String ip) =>
-      _postControl(ip, FirmwareContract.stopPumpPath);
-  Future<void> resetLockout(String ip) =>
-      _postControl(ip, FirmwareContract.resetLockoutPath);
+  Future<void> startPump(String baseUrl) =>
+      _postControl(baseUrl, FirmwareContract.startPumpPath);
+  Future<void> stopPump(String baseUrl) =>
+      _postControl(baseUrl, FirmwareContract.stopPumpPath);
+  Future<void> resetLockout(String baseUrl) =>
+      _postControl(baseUrl, FirmwareContract.resetLockoutPath);
 
-  Future<void> _postControl(String ip, String path) async {
+  Future<void> _postControl(String baseUrl, String path) async {
     debugPrint('[ControllerApi] POST $path start');
     final response = await _dio.post<Map<String, dynamic>>(
-      '${_baseUrl(ip)}$path',
+      '${_normalizeBaseUrl(baseUrl)}$path',
       options: Options(
         headers: const {'connection': 'close'},
         validateStatus: (status) => status != null && status < 500,
@@ -75,6 +73,17 @@ class ControllerApiService {
       throw StateError('Controller rejected the command.');
     }
     debugPrint('[ControllerApi] POST $path success');
+  }
+
+  String _normalizeBaseUrl(String value) {
+    final trimmed = value.trim();
+    final withScheme =
+        trimmed.startsWith('http://') || trimmed.startsWith('https://')
+        ? trimmed
+        : 'http://$trimmed';
+    return withScheme.endsWith('/')
+        ? withScheme.substring(0, withScheme.length - 1)
+        : withScheme;
   }
 }
 

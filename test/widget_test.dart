@@ -2,6 +2,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:water_tank_controller/main.dart';
+import 'package:water_tank_controller/models/app_user.dart';
+import 'package:water_tank_controller/models/auth_state.dart';
+import 'package:water_tank_controller/models/connection_info.dart';
 import 'package:water_tank_controller/models/controller_snapshot.dart';
 import 'package:water_tank_controller/models/controller_status.dart';
 import 'package:water_tank_controller/providers/app_providers.dart';
@@ -17,6 +20,7 @@ void main() {
         overrides: [
           sharedPreferencesProvider.overrideWithValue(prefs),
           notificationServiceProvider.overrideWithValue(NotificationService()),
+          authControllerProvider.overrideWith(FakeAuthController.new),
           controllerControllerProvider.overrideWith(
             FakeControllerController.new,
           ),
@@ -27,8 +31,25 @@ void main() {
 
     await tester.pump();
     expect(find.text('Water Tank Controller'), findsOneWidget);
-    expect(find.text('192.168.1.13'), findsOneWidget);
+    expect(find.text('Administrator - Local Connection'), findsOneWidget);
   });
+}
+
+class FakeAuthController extends AuthController {
+  @override
+  AuthState build() {
+    const user = AppUser(
+      id: 'admin',
+      name: 'Administrator',
+      role: UserRole.administrator,
+      active: true,
+    );
+    return const AuthState(
+      loading: false,
+      users: [user],
+      session: AuthSession(user: user),
+    );
+  }
 }
 
 class FakeControllerController extends ControllerController {
@@ -46,6 +67,12 @@ class FakeControllerController extends ControllerController {
       ),
       online: true,
       syncing: false,
+      connection: ConnectionInfo(
+        mode: ConnectionMode.local,
+        qualityPercent: 96,
+        endpoint: 'http://192.168.1.13',
+        switchedAt: DateTime(2026),
+      ),
     );
   }
 }
