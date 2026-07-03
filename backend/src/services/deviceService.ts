@@ -6,16 +6,25 @@ import { deviceStatusSchema } from '../models/api.js';
 import { addHistory, addNotification } from './historyService.js';
 
 export async function ensureDefaultDevice() {
+  const deviceTokenHash = await bcrypt.hash(env.DEVICE_TOKEN, 12);
   const existing = await prisma.device.findUnique({
     where: { deviceId: env.DEFAULT_DEVICE_ID }
   });
-  if (existing) return existing;
+  if (existing) {
+    return prisma.device.update({
+      where: { id: existing.id },
+      data: {
+        deviceName: env.DEFAULT_DEVICE_NAME,
+        deviceTokenHash
+      }
+    });
+  }
 
   return prisma.device.create({
     data: {
       deviceId: env.DEFAULT_DEVICE_ID,
       deviceName: env.DEFAULT_DEVICE_NAME,
-      deviceTokenHash: await bcrypt.hash(env.DEVICE_TOKEN, 12)
+      deviceTokenHash
     }
   });
 }
