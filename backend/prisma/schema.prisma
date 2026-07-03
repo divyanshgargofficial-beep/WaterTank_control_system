@@ -1,0 +1,152 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  ADMIN
+  FAMILY
+}
+
+enum CommandType {
+  PUMP_ON
+  PUMP_OFF
+  RESET_LOCKOUT
+}
+
+enum CommandStatus {
+  PENDING
+  DELIVERED
+  ACKED
+  FAILED
+}
+
+enum HistoryType {
+  PUMP_STARTED
+  PUMP_STOPPED
+  TANK_FULL
+  LOCKOUT_ACTIVATED
+  LOCKOUT_RESET
+  CONTROLLER_OFFLINE
+  CONTROLLER_ONLINE
+  STATUS_SYNC
+  COMMAND_ACKED
+}
+
+enum NotificationType {
+  PUMP_STARTED
+  PUMP_STOPPED
+  TANK_FULL
+  CONTROLLER_OFFLINE
+  CONTROLLER_ONLINE
+  LOCKOUT_ACTIVATED
+}
+
+model User {
+  id           String         @id @default(cuid())
+  email        String         @unique
+  name         String
+  role         UserRole
+  passwordHash String
+  active       Boolean        @default(true)
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
+  sessions     Session[]
+  commands     Command[]
+  history      History[]
+  notifications Notification[]
+}
+
+model Device {
+  id              String         @id @default(cuid())
+  deviceId        String         @unique
+  deviceName      String
+  firmwareVersion String?
+  deviceTokenHash String
+  lastSeen        DateTime?
+  online          Boolean        @default(false)
+  pumpRunning     Boolean        @default(false)
+  tankFull        Boolean        @default(false)
+  lockout         Boolean        @default(false)
+  runtime         Int            @default(0)
+  totalRuntime    Int            @default(0)
+  wifiRSSI        Int?
+  ipAddress       String?
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+  commands        Command[]
+  statuses        DeviceStatus[]
+  history         History[]
+  notifications   Notification[]
+}
+
+model Command {
+  id          String        @id @default(cuid())
+  deviceId    String
+  requestedBy String?
+  type        CommandType
+  status      CommandStatus @default(PENDING)
+  payload     Json?
+  deliveredAt DateTime?
+  ackedAt     DateTime?
+  error       String?
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+  device      Device        @relation(fields: [deviceId], references: [id])
+  user        User?         @relation(fields: [requestedBy], references: [id])
+}
+
+model DeviceStatus {
+  id           String   @id @default(cuid())
+  deviceId     String
+  pumpRunning  Boolean
+  tankFull     Boolean
+  lockout      Boolean
+  runtime      Int
+  totalRuntime Int
+  wifiRSSI     Int?
+  ipAddress    String?
+  createdAt    DateTime @default(now())
+  device       Device   @relation(fields: [deviceId], references: [id])
+}
+
+model Session {
+  id        String   @id @default(cuid())
+  userId    String
+  tokenHash String
+  userAgent String?
+  ipAddress String?
+  expiresAt DateTime
+  revokedAt DateTime?
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id])
+}
+
+model Notification {
+  id        String           @id @default(cuid())
+  userId    String?
+  deviceId  String
+  type      NotificationType
+  title     String
+  body      String
+  read      Boolean          @default(false)
+  createdAt DateTime         @default(now())
+  user      User?            @relation(fields: [userId], references: [id])
+  device    Device           @relation(fields: [deviceId], references: [id])
+}
+
+model History {
+  id        String      @id @default(cuid())
+  deviceId  String
+  userId    String?
+  type      HistoryType
+  message   String
+  metadata  Json?
+  createdAt DateTime    @default(now())
+  device    Device      @relation(fields: [deviceId], references: [id])
+  user      User?       @relation(fields: [userId], references: [id])
+}

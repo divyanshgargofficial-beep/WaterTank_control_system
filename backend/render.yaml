@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: water-tank-cloud-backend
+    env: docker
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        sync: false
+      - key: JWT_SECRET
+        sync: false
+      - key: DEVICE_TOKEN
+        sync: false
