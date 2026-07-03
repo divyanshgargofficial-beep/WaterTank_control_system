@@ -4,17 +4,26 @@ import { prisma } from '../config/prisma.js';
 import * as deviceService from '../services/deviceService.js';
 
 export async function pumpOn(req: Request, res: Response) {
-  const command = await deviceService.queueCommand(CommandType.PUMP_ON, req.user!.id);
+  const deviceId = typeof req.body?.deviceId === 'string' ? req.body.deviceId : undefined;
+  console.log('[AppCommand] pumpOn request', { userId: req.user!.id, deviceId, body: req.body });
+  const command = await deviceService.queueCommand(CommandType.PUMP_ON, req.user!.id, deviceId);
+  console.log('[AppCommand] pumpOn queued', { commandId: command.id, deviceRowId: command.deviceId, status: command.status });
   res.json({ success: true, commandId: command.id });
 }
 
 export async function pumpOff(req: Request, res: Response) {
-  const command = await deviceService.queueCommand(CommandType.PUMP_OFF, req.user!.id);
+  const deviceId = typeof req.body?.deviceId === 'string' ? req.body.deviceId : undefined;
+  console.log('[AppCommand] pumpOff request', { userId: req.user!.id, deviceId, body: req.body });
+  const command = await deviceService.queueCommand(CommandType.PUMP_OFF, req.user!.id, deviceId);
+  console.log('[AppCommand] pumpOff queued', { commandId: command.id, deviceRowId: command.deviceId, status: command.status });
   res.json({ success: true, commandId: command.id });
 }
 
 export async function reset(req: Request, res: Response) {
-  const command = await deviceService.queueCommand(CommandType.RESET_LOCKOUT, req.user!.id);
+  const deviceId = typeof req.body?.deviceId === 'string' ? req.body.deviceId : undefined;
+  console.log('[AppCommand] reset request', { userId: req.user!.id, deviceId, body: req.body });
+  const command = await deviceService.queueCommand(CommandType.RESET_LOCKOUT, req.user!.id, deviceId);
+  console.log('[AppCommand] reset queued', { commandId: command.id, deviceRowId: command.deviceId, status: command.status });
   res.json({ success: true, commandId: command.id });
 }
 

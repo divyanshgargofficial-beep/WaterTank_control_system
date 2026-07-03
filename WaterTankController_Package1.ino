@@ -36,6 +36,12 @@ unsigned long lastCloudStatusMillis = 0;
 unsigned long cloudBackoffUntilMillis = 0;
 unsigned long cloudBackoffSeconds = 1;
 bool cloudOnline = false;
+bool forceCloudStatusUpload = false;
+
+void cloudLog(String message)
+{
+  Serial.println("[CloudSync] " + message);
+}
 
 void saveRuntime()
 {
@@ -161,6 +167,7 @@ void handleReset()
 
 void markCloudSuccess()
 {
+  if(!cloudOnline) cloudLog("online");
   cloudOnline = true;
   cloudBackoffSeconds = 1;
   cloudBackoffUntilMillis = 0;
@@ -168,9 +175,11 @@ void markCloudSuccess()
 
 void markCloudFailure()
 {
+  if(cloudOnline) cloudLog("offline");
   cloudOnline = false;
   if(cloudBackoffSeconds < 60) cloudBackoffSeconds *= 2;
   cloudBackoffUntilMillis = millis() + (cloudBackoffSeconds * 1000UL);
+  cloudLog("failure; backoff seconds=" + String(cloudBackoffSeconds));
 }
 
 bool cloudReady()
@@ -199,11 +208,20 @@ String extractJsonValue(String json, String key)
 
 void ackCloudCommand(String commandId, bool success, String message)
 {
-  if(commandId.length() == 0 || !cloudReady()) return;
+  if(commandId.length() == 0 || !cloudReady())
+  {
+    cloudLog("ack skipped commandId=" + commandId);
+    return;
+  }
 
   HTTPClient http;
   String url = String(cloudBaseUrl) + "/device/ack";
-  if(!http.begin(cloudClient, url)) return;
+  cloudLog("POST " + url + " commandId=" + commandId + " success=" + String(success ? "true" : "false"));
+  if(!http.begin(cloudClient, url))
+  {
+    cloudLog("ack begin failed");
+    return;
+  }
   addCloudHeaders(http);
   String body="{";
   body+="\"deviceId\":\"" + String(deviceId) + "\"";
@@ -212,6 +230,8 @@ void ackCloudCommand(String commandId, bool success, String message)
   body+=",\"message\":\"" + message + "\"";
   body+="}";
   int code = http.POST(body);
+  String response = http.getString();
+  cloudLog("ACK status=" + String(code) + " response=" + response);
   http.end();
   if(code >= 200 && code < 300) markCloudSuccess();
   else markCloudFailure();
@@ -219,39 +239,48 @@ void ackCloudCommand(String commandId, bool success, String message)
 
 void executeCloudCommand(String commandId, String command)
 {
-  if(command == "PUMP_ON")
+  cloudLog("execute commandId=" + commandId + " command=" + command);
+  if(command == "PUMP_ON" || command == "ON")
   {
     if(lockout)
     {
+      cloudLog("PUMP_ON blocked by lockout");
       ackCloudCommand(commandId, false, "lockout");
       return;
     }
     tankFull = false;
+    cloudLog("calling writePump(true)");
     writePump(true);
     ackCloudCommand(commandId, true, "pump started");
+    forceCloudStatusUpload = true;
     return;
   }
 
-  if(command == "PUMP_OFF")
+  if(command == "PUMP_OFF" || command == "OFF")
   {
+    cloudLog("calling writePump(false)");
     writePump(false);
     tankFull = true;
     lockout = true;
     blinkLed();
     ackCloudCommand(commandId, true, "pump stopped");
+    forceCloudStatusUpload = true;
     return;
   }
 
-  if(command == "RESET_LOCKOUT")
+  if(command == "RESET_LOCKOUT" || command == "RESET")
   {
+    cloudLog("resetting lockout");
     lockout = false;
     tankFull = false;
     ackCloudCommand(commandId, true, "lockout reset");
+    forceCloudStatusUpload = true;
     return;
   }
 
   if(command.length() > 0 && command != "NONE")
   {
+    cloudLog("unknown command=" + command);
     ackCloudCommand(commandId, false, "unknown command");
   }
 }
@@ -264,19 +293,23 @@ void pollCloudCommand()
 
   HTTPClient http;
   String url = String(cloudBaseUrl) + "/device/command?deviceId=" + String(deviceId);
+  cloudLog("GET " + url);
   if(!http.begin(cloudClient, url))
   {
+    cloudLog("command begin failed");
     markCloudFailure();
     return;
   }
   addCloudHeaders(http);
   int code = http.GET();
+  String response = http.getString();
+  cloudLog("COMMAND status=" + String(code) + " response=" + response);
   if(code >= 200 && code < 300)
   {
-    String response = http.getString();
     markCloudSuccess();
     String command = extractJsonValue(response, "command");
     String commandId = extractJsonValue(response, "commandId");
+    cloudLog("parsed commandId=" + commandId + " command=" + command);
     executeCloudCommand(commandId, command);
   }
   else
@@ -289,18 +322,24 @@ void pollCloudCommand()
 void postCloudStatus()
 {
   if(!cloudReady()) return;
-  if(millis() - lastCloudStatusMillis < 2000UL) return;
+  if(!forceCloudStatusUpload && millis() - lastCloudStatusMillis < 2000UL) return;
+  forceCloudStatusUpload = false;
   lastCloudStatusMillis = millis();
 
   HTTPClient http;
   String url = String(cloudBaseUrl) + "/device/status";
+  String body = cloudStatusJson();
+  cloudLog("POST " + url + " body=" + body);
   if(!http.begin(cloudClient, url))
   {
+    cloudLog("status begin failed");
     markCloudFailure();
     return;
   }
   addCloudHeaders(http);
-  int code = http.POST(cloudStatusJson());
+  int code = http.POST(body);
+  String response = http.getString();
+  cloudLog("STATUS status=" + String(code) + " response=" + response);
   if(code >= 200 && code < 300) markCloudSuccess();
   else markCloudFailure();
   http.end();
@@ -346,6 +385,9 @@ void connectWiFi()
 
 void setup()
 {
+  Serial.begin(115200);
+  Serial.println();
+  cloudLog("boot firmware=" + String(firmwareVersion) + " deviceId=" + String(deviceId));
   EEPROM.begin(64);
   loadRuntime();
 

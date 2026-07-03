@@ -113,14 +113,44 @@ export async function recordStatus(input: unknown) {
   return updated;
 }
 
+export function toWireCommand(type: CommandType) {
+  switch (type) {
+    case CommandType.PUMP_ON:
+      return 'ON';
+    case CommandType.PUMP_OFF:
+      return 'OFF';
+    case CommandType.RESET_LOCKOUT:
+      return 'RESET';
+  }
+}
+
 export async function nextCommand(deviceId: string) {
   const device = await findDeviceByPublicId(deviceId);
-  if (!device) return null;
+  if (!device) {
+    console.log('[DeviceCommand] device not found', { deviceId });
+    return null;
+  }
   const command = await prisma.command.findFirst({
-    where: { deviceId: device.id, status: CommandStatus.PENDING },
+    where: {
+      deviceId: device.id,
+      OR: [
+        { status: CommandStatus.PENDING },
+        {
+          status: CommandStatus.DELIVERED,
+          deliveredAt: { lt: new Date(Date.now() - 15_000) }
+        }
+      ]
+    },
     orderBy: { createdAt: 'asc' }
   });
   if (!command) return null;
+  console.log('[DeviceCommand] command selected', {
+    publicDeviceId: deviceId,
+    deviceRowId: device.id,
+    commandId: command.id,
+    type: command.type,
+    previousStatus: command.status
+  });
   return prisma.command.update({
     where: { id: command.id },
     data: { status: CommandStatus.DELIVERED, deliveredAt: new Date() }
@@ -145,8 +175,20 @@ export async function acknowledgeCommand(devicePublicId: string, commandId: stri
   return command;
 }
 
-export async function queueCommand(type: CommandType, userId: string) {
-  const device = await ensureDefaultDevice();
+export async function queueCommand(type: CommandType, userId: string, requestedDeviceId?: string) {
+  const device = requestedDeviceId
+    ? await findDeviceByPublicId(requestedDeviceId)
+    : await ensureDefaultDevice();
+  if (!device) {
+    console.log('[AppCommand] requested device not found', { requestedDeviceId, type, userId });
+    throw new Error('Device not found');
+  }
+  console.log('[AppCommand] queueCommand', {
+    type,
+    userId,
+    publicDeviceId: device.deviceId,
+    deviceRowId: device.id
+  });
   return prisma.command.create({
     data: {
       deviceId: device.id,

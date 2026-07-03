@@ -1,4 +1,5 @@
 import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart';
 import 'package:water_tank_controller/models/controller_status.dart';
 import 'package:water_tank_controller/services/controller_api_service.dart';
 import 'package:water_tank_controller/services/controller_service.dart';
@@ -9,6 +10,7 @@ class CloudControllerService implements ControllerService {
   final Dio _dio;
   final String cloudUrl;
   final Future<String?> Function() _tokenProvider;
+  static const _deviceId = 'package-1';
 
   @override
   String get endpoint => cloudUrl;
@@ -27,20 +29,43 @@ class CloudControllerService implements ControllerService {
   }
 
   @override
-  Future<void> startPump() => _post('/app/pump/on');
+  Future<void> startPump() => _postAndWait(
+    '/app/pump/on',
+    expected: (status) => status.pumpRunning,
+    label: 'pump on',
+  );
 
   @override
-  Future<void> stopPump() => _post('/app/pump/off');
+  Future<void> stopPump() => _postAndWait(
+    '/app/pump/off',
+    expected: (status) => !status.pumpRunning,
+    label: 'pump off',
+  );
 
   @override
-  Future<void> resetLockout() => _post('/app/reset');
+  Future<void> resetLockout() => _postAndWait(
+    '/app/reset',
+    expected: (status) => !status.lockout,
+    label: 'reset lockout',
+  );
 
-  Future<void> _post(String path) async {
+  Future<void> _postAndWait(
+    String path, {
+    required bool Function(ControllerStatus status) expected,
+    required String label,
+  }) async {
+    final url = '${_normalizeBaseUrl(endpoint)}$path';
+    final data = {'deviceId': _deviceId};
+    debugPrint('[CloudController] POST $url body=$data');
     final response = await _dio.post<Map<String, dynamic>>(
-      '${_normalizeBaseUrl(endpoint)}$path',
+      url,
+      data: data,
       options: await _options(
         validateStatus: (status) => status != null && status < 500,
       ),
+    );
+    debugPrint(
+      '[CloudController] POST $path status=${response.statusCode} response=${response.data}',
     );
     if (response.statusCode == 423) {
       throw ControllerLockoutException();
@@ -48,6 +73,24 @@ class CloudControllerService implements ControllerService {
     if (response.statusCode != 200 || response.data?['success'] != true) {
       throw StateError('Cloud rejected the command.');
     }
+    await _waitForStatus(label: label, expected: expected);
+  }
+
+  Future<void> _waitForStatus({
+    required String label,
+    required bool Function(ControllerStatus status) expected,
+  }) async {
+    const attempts = 10;
+    const delay = Duration(milliseconds: 800);
+    for (var attempt = 1; attempt <= attempts; attempt++) {
+      await Future<void>.delayed(delay);
+      final status = await fetchStatus();
+      debugPrint(
+        '[CloudController] wait $label attempt=$attempt pump=${status.pumpRunning} tankFull=${status.tankFull} lockout=${status.lockout}',
+      );
+      if (expected(status)) return;
+    }
+    debugPrint('[CloudController] wait $label timed out; continuing refresh');
   }
 
   Future<Options> _options({
@@ -61,6 +104,7 @@ class CloudControllerService implements ControllerService {
       headers: {
         Headers.acceptHeader: 'application/json',
         'authorization': 'Bearer $token',
+        'x-device-id': _deviceId,
       },
       validateStatus: validateStatus,
     );
