@@ -1,6 +1,8 @@
 
 #include <ESP8266WiFi.h>
 #include <ESP8266WebServer.h>
+#include <ESP8266HTTPClient.h>
+#include <WiFiClientSecure.h>
 #include <EEPROM.h>
 
 #define RELAY_PIN 5
@@ -9,11 +11,18 @@
 const char* ssid = "Airtel_divy_7892_2.4Ghz";
 const char* password = "air72986";
 
+const char* firmwareVersion = "1.1.0-cloud";
+const char* deviceId = "package-1";
+const char* deviceName = "Home Water Tank";
+const char* deviceToken = "replace-with-device-token";
+const char* cloudBaseUrl = "https://your-water-tank-backend.railway.app";
+
 IPAddress local_IP(192,168,1,13);
 IPAddress gateway(192,168,1,1);
 IPAddress subnet(255,255,255,0);
 
 ESP8266WebServer server(80);
+WiFiClientSecure cloudClient;
 
 bool pumpRunning = false;
 bool tankFull = false;
@@ -22,6 +31,11 @@ bool lockout = false;
 unsigned long sessionStartMillis = 0;
 unsigned long currentRuntimeSeconds = 0;
 unsigned long totalRuntimeSeconds = 0;
+unsigned long lastCloudCommandMillis = 0;
+unsigned long lastCloudStatusMillis = 0;
+unsigned long cloudBackoffUntilMillis = 0;
+unsigned long cloudBackoffSeconds = 1;
+bool cloudOnline = false;
 
 void saveRuntime()
 {
@@ -94,6 +108,27 @@ String jsonStatus()
   return s;
 }
 
+String cloudStatusJson()
+{
+  unsigned long current =
+    pumpRunning ? (millis()-sessionStartMillis)/1000UL
+                : currentRuntimeSeconds;
+
+  String s="{";
+  s+="\"deviceId\":\"" + String(deviceId) + "\"";
+  s+=",\"deviceName\":\"" + String(deviceName) + "\"";
+  s+=",\"firmwareVersion\":\"" + String(firmwareVersion) + "\"";
+  s+=",\"pumpRunning\":" + String(pumpRunning?"true":"false");
+  s+=",\"tankFull\":" + String(tankFull?"true":"false");
+  s+=",\"lockout\":" + String(lockout?"true":"false");
+  s+=",\"runtime\":" + String(current);
+  s+=",\"totalRuntime\":" + String(totalRuntimeSeconds);
+  s+=",\"wifiRSSI\":" + String(WiFi.RSSI());
+  s+=",\"ipAddress\":\"" + WiFi.localIP().toString() + "\"";
+  s+="}";
+  return s;
+}
+
 void handleApiStatus(){ server.send(200,"application/json",jsonStatus()); }
 
 void handleOn()
@@ -122,6 +157,159 @@ void handleReset()
   lockout=false;
   tankFull=false;
   server.send(200,"application/json","{\"success\":true}");
+}
+
+void markCloudSuccess()
+{
+  cloudOnline = true;
+  cloudBackoffSeconds = 1;
+  cloudBackoffUntilMillis = 0;
+}
+
+void markCloudFailure()
+{
+  cloudOnline = false;
+  if(cloudBackoffSeconds < 60) cloudBackoffSeconds *= 2;
+  cloudBackoffUntilMillis = millis() + (cloudBackoffSeconds * 1000UL);
+}
+
+bool cloudReady()
+{
+  return WiFi.status() == WL_CONNECTED && millis() >= cloudBackoffUntilMillis;
+}
+
+void addCloudHeaders(HTTPClient& http)
+{
+  http.addHeader("Content-Type", "application/json");
+  http.addHeader("Accept", "application/json");
+  http.addHeader("X-Device-Id", deviceId);
+  http.addHeader("X-Device-Token", deviceToken);
+}
+
+String extractJsonValue(String json, String key)
+{
+  String needle = "\"" + key + "\":\"";
+  int start = json.indexOf(needle);
+  if(start < 0) return "";
+  start += needle.length();
+  int end = json.indexOf("\"", start);
+  if(end < 0) return "";
+  return json.substring(start, end);
+}
+
+void ackCloudCommand(String commandId, bool success, String message)
+{
+  if(commandId.length() == 0 || !cloudReady()) return;
+
+  HTTPClient http;
+  String url = String(cloudBaseUrl) + "/device/ack";
+  if(!http.begin(cloudClient, url)) return;
+  addCloudHeaders(http);
+  String body="{";
+  body+="\"deviceId\":\"" + String(deviceId) + "\"";
+  body+=",\"commandId\":\"" + commandId + "\"";
+  body+=",\"success\":" + String(success ? "true" : "false");
+  body+=",\"message\":\"" + message + "\"";
+  body+="}";
+  int code = http.POST(body);
+  http.end();
+  if(code >= 200 && code < 300) markCloudSuccess();
+  else markCloudFailure();
+}
+
+void executeCloudCommand(String commandId, String command)
+{
+  if(command == "PUMP_ON")
+  {
+    if(lockout)
+    {
+      ackCloudCommand(commandId, false, "lockout");
+      return;
+    }
+    tankFull = false;
+    writePump(true);
+    ackCloudCommand(commandId, true, "pump started");
+    return;
+  }
+
+  if(command == "PUMP_OFF")
+  {
+    writePump(false);
+    tankFull = true;
+    lockout = true;
+    blinkLed();
+    ackCloudCommand(commandId, true, "pump stopped");
+    return;
+  }
+
+  if(command == "RESET_LOCKOUT")
+  {
+    lockout = false;
+    tankFull = false;
+    ackCloudCommand(commandId, true, "lockout reset");
+    return;
+  }
+
+  if(command.length() > 0 && command != "NONE")
+  {
+    ackCloudCommand(commandId, false, "unknown command");
+  }
+}
+
+void pollCloudCommand()
+{
+  if(!cloudReady()) return;
+  if(millis() - lastCloudCommandMillis < 1000UL) return;
+  lastCloudCommandMillis = millis();
+
+  HTTPClient http;
+  String url = String(cloudBaseUrl) + "/device/command?deviceId=" + String(deviceId);
+  if(!http.begin(cloudClient, url))
+  {
+    markCloudFailure();
+    return;
+  }
+  addCloudHeaders(http);
+  int code = http.GET();
+  if(code >= 200 && code < 300)
+  {
+    String response = http.getString();
+    markCloudSuccess();
+    String command = extractJsonValue(response, "command");
+    String commandId = extractJsonValue(response, "commandId");
+    executeCloudCommand(commandId, command);
+  }
+  else
+  {
+    markCloudFailure();
+  }
+  http.end();
+}
+
+void postCloudStatus()
+{
+  if(!cloudReady()) return;
+  if(millis() - lastCloudStatusMillis < 2000UL) return;
+  lastCloudStatusMillis = millis();
+
+  HTTPClient http;
+  String url = String(cloudBaseUrl) + "/device/status";
+  if(!http.begin(cloudClient, url))
+  {
+    markCloudFailure();
+    return;
+  }
+  addCloudHeaders(http);
+  int code = http.POST(cloudStatusJson());
+  if(code >= 200 && code < 300) markCloudSuccess();
+  else markCloudFailure();
+  http.end();
+}
+
+void syncCloud()
+{
+  pollCloudCommand();
+  postCloudStatus();
 }
 
 void handleDashboard()
@@ -168,6 +356,7 @@ void setup()
   writePump(false);
 
   connectWiFi();
+  cloudClient.setInsecure();
 
   server.on("/", handleDashboard);
   server.on("/on", handleOn);
@@ -191,4 +380,5 @@ void loop()
   }
 
   server.handleClient();
+  syncCloud();
 }
