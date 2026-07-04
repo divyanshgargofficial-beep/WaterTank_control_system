@@ -66,7 +66,9 @@
 
   const unsigned long wifiReconnectIntervalMs = 10000UL;
   const unsigned long diagnosticsIntervalMs = 30000UL;
-  const unsigned long cloudHttpTimeoutMs = 1200UL;
+  const unsigned long cloudCommandTimeoutMs = 9000UL;
+  const unsigned long cloudAckTimeoutMs = 7000UL;
+  const unsigned long cloudStatusTimeoutMs = 3500UL;
   const unsigned long localPriorityWindowMs = 5000UL;
   const unsigned long cloudWorkGapMs = 350UL;
 
@@ -317,7 +319,7 @@
   {
     if(cloudOnline) cloudLog("offline");
     cloudOnline = false;
-    cloudBackoffSeconds = min(cloudBackoffSeconds + 2UL, 30UL);
+    cloudBackoffSeconds = min(cloudBackoffSeconds + 2UL, 8UL);
     cloudBackoffUntilMillis = millis() + (cloudBackoffSeconds * 1000UL);
     cloudLog("failure; backoff seconds=" + String(cloudBackoffSeconds));
   }
@@ -391,13 +393,13 @@
 
     WiFiClientSecure client;
     client.setInsecure();
-    client.setTimeout(cloudHttpTimeoutMs);
+    client.setTimeout(cloudAckTimeoutMs);
    
 
     HTTPClient http;
     http.setReuse(false);
     http.useHTTP10(true);
-    http.setTimeout(cloudHttpTimeoutMs);
+    http.setTimeout(cloudAckTimeoutMs);
     String url = String(cloudBaseUrl) + "/device/ack";
     cloudLog("POST " + url + " commandId=" + pendingCloudAckCommandId
              + " success=" + String(pendingCloudAckSuccess ? "true" : "false"));
@@ -497,13 +499,13 @@
 
     WiFiClientSecure client;
     client.setInsecure();
-    client.setTimeout(cloudHttpTimeoutMs);
+    client.setTimeout(cloudCommandTimeoutMs);
     
 
     HTTPClient http;
     http.setReuse(false);
     http.useHTTP10(true);
-    http.setTimeout(cloudHttpTimeoutMs);
+    http.setTimeout(cloudCommandTimeoutMs);
     String url = String(cloudBaseUrl) + "/device/command?deviceId=" + String(deviceId);
     cloudLog("GET " + url);
     logCloudHttpDiagnostics("COMMAND", url);
@@ -551,13 +553,13 @@
 
     WiFiClientSecure client;
     client.setInsecure();
-    client.setTimeout(cloudHttpTimeoutMs);
+    client.setTimeout(cloudStatusTimeoutMs);
     
 
     HTTPClient http;
     http.setReuse(false);
     http.useHTTP10(true);
-    http.setTimeout(cloudHttpTimeoutMs);
+    http.setTimeout(cloudStatusTimeoutMs);
     String url = String(cloudBaseUrl) + "/device/status";
     String body = cloudStatusJson();
     cloudLog("POST " + url + " body=" + body);

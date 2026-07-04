@@ -13,7 +13,7 @@ class CloudControllerService implements ControllerService {
   static const _deviceId = 'package-1';
   static const _commandPollDelay = Duration(milliseconds: 900);
   static const _statusPollDelay = Duration(milliseconds: 2200);
-  static const _commandTimeout = Duration(seconds: 12);
+  static const _commandTimeout = Duration(seconds: 25);
 
   @override
   String get endpoint => cloudUrl;

@@ -119,7 +119,10 @@ async function settleDeliveredCommandFromStatus(
   const command = await prisma.command.findFirst({
     where: {
       deviceId: deviceRowId,
-      status: CommandStatus.DELIVERED
+      OR: [
+        { status: CommandStatus.PENDING },
+        { status: CommandStatus.DELIVERED }
+      ]
     },
     orderBy: { createdAt: 'asc' }
   });
@@ -199,17 +202,14 @@ export async function nextCommand(deviceId: string) {
     orderBy: { createdAt: 'desc' }
   });
   if (!command) return null;
-  console.log('[DeviceCommand] command selected', {
+  console.log('[DeviceCommand] command offered', {
     publicDeviceId: deviceId,
     deviceRowId: device.id,
     commandId: command.id,
     type: command.type,
     previousStatus: command.status
   });
-  return prisma.command.update({
-    where: { id: command.id },
-    data: { status: CommandStatus.DELIVERED, deliveredAt: new Date() }
-  });
+  return command;
 }
 
 async function expireStaleActiveCommands(deviceRowId: string) {
