@@ -50,8 +50,8 @@ final localDioProvider = Provider((ref) {
 });
 final cloudDioProvider = Provider((ref) {
   final settings = ref.watch(settingsControllerProvider);
-  final timeoutSeconds = settings.connectionTimeoutSeconds < 12
-      ? 12
+  final timeoutSeconds = settings.connectionTimeoutSeconds < 30
+      ? 30
       : settings.connectionTimeoutSeconds;
   final timeout = Duration(seconds: timeoutSeconds);
   return Dio(
@@ -78,7 +78,7 @@ final connectionManagerProvider = Provider(
     (cloudUrl) => CloudControllerService(
       ref.watch(cloudDioProvider),
       cloudUrl,
-      () => ref.read(authRepositoryProvider).readCloudToken(),
+      () => ref.read(authControllerProvider.notifier).cloudToken(),
     ),
   ),
 );
@@ -180,6 +180,18 @@ class AuthController extends Notifier<AuthState> {
       debugPrint('[CloudAuth] login skipped/failed: $error');
       return false;
     }
+  }
+
+  Future<String?> cloudToken() async {
+    final repository = ref.read(authRepositoryProvider);
+    final existing = await repository.readCloudToken();
+    if (existing != null && existing.isNotEmpty) return existing;
+    final user = state.session?.user;
+    if (user == null) return null;
+    final password = await repository.readCloudPassword(user.id);
+    if (password == null || password.isEmpty) return null;
+    final loggedIn = await _tryCloudLogin(user, password);
+    return loggedIn ? repository.readCloudToken() : null;
   }
 
   Future<void> logout() async {
@@ -609,7 +621,7 @@ class ControllerController extends Notifier<ControllerSnapshot> {
   String _friendlyError(Object error) {
     if (error is DioException) return 'Unable to reach controller';
     if (error.toString().contains('Cloud authentication is not available')) {
-      return 'Cloud authentication is not available. Sign out and sign in again.';
+      return 'Cloud authentication is not ready. Retrying cloud login.';
     }
     return error.toString();
   }
