@@ -598,6 +598,11 @@
   {
     if(shouldPrioritizeLocal()) return;
     if(millis() - lastCloudWorkMillis < cloudWorkGapMs) return;
+    if(forceCloudStatusUpload && postCloudStatus())
+    {
+      lastCloudWorkMillis = millis();
+      return;
+    }
     if(processPendingCloudAck())
     {
       lastCloudWorkMillis = millis();

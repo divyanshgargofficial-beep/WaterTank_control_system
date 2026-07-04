@@ -122,7 +122,16 @@ class CloudControllerService implements ControllerService {
       }
       if (status == 'ACKED') {
         debugPrint('[CloudController] command $label acknowledged');
-        return;
+        final liveStatus = await fetchStatus();
+        if (expected(liveStatus)) {
+          debugPrint(
+            '[CloudController] command $label confirmed by status after ack',
+          );
+          return;
+        }
+        throw StateError(
+          'Cloud command was acknowledged before controller status updated.',
+        );
       }
       if (status == 'FAILED') {
         if (error.toLowerCase().contains('lockout') || lockout) {
