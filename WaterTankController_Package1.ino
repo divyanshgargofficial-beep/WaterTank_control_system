@@ -11,7 +11,7 @@
   const char* ssid = "Airtel_divy_7892_2.4Ghz";
   const char* password = "air72986";
 
-  const char* firmwareVersion = "1.1.0-cloud";
+  const char* firmwareVersion = "1.2.0-separated-local-cloud";
   const char* deviceId = "package-1";
   const char* deviceName = "Home Water Tank";
   const char* deviceToken = "tank-controller-2026-secret-7Hk9LmP2";
@@ -21,6 +21,8 @@
   IPAddress local_IP(192,168,1,13);
   IPAddress gateway(192,168,1,1);
   IPAddress subnet(255,255,255,0);
+  IPAddress dns1(8,8,8,8);
+  IPAddress dns2(1,1,1,1);
 
   ESP8266WebServer server(80);
 
@@ -36,12 +38,119 @@
   unsigned long lastCloudStatusMillis = 0;
   unsigned long cloudBackoffUntilMillis = 0;
   unsigned long cloudBackoffSeconds = 1;
+  unsigned long lastLocalRequestMillis = 0;
+  unsigned long localCommandHoldoffUntilMillis = 0;
+  unsigned long lastWiFiAttemptMillis = 0;
+  unsigned long lastDiagnosticsMillis = 0;
+  unsigned long lastCloudHttpDiagnosticsMillis = 0;
+  unsigned long lastCloudWorkMillis = 0;
+  unsigned long lastCloudCommandAttemptMillis = 0;
+  unsigned long lastYieldMillis = 0;
+  unsigned long ledBlinkLastMillis = 0;
+  uint8_t wifiReconnectAttempts = 0;
+  uint8_t ledBlinkTransitionsRemaining = 0;
   bool cloudOnline = false;
   bool forceCloudStatusUpload = false;
+  bool wifiConnectedReported = false;
+  bool serverStarted = false;
+  bool ledBlinkActive = false;
+  bool ledBlinkOn = false;
+  bool pendingCloudAck = false;
+  bool pendingCloudAckSuccess = false;
+  int lastCloudCommandStatusCode = 0;
+  int lastCloudStatusCode = 0;
+  int lastCloudAckStatusCode = 0;
+  String pendingCloudAckCommandId = "";
+  String pendingCloudAckMessage = "";
+  String lastCloudCommandPayload = "";
+
+  const unsigned long wifiReconnectIntervalMs = 10000UL;
+  const unsigned long diagnosticsIntervalMs = 30000UL;
+  const unsigned long cloudHttpTimeoutMs = 1200UL;
+  const unsigned long localPriorityWindowMs = 5000UL;
+  const unsigned long cloudWorkGapMs = 350UL;
 
   void cloudLog(String message)
   {
     Serial.println("[CloudSync] " + message);
+  }
+
+  void addCorsHeaders()
+  {
+    server.sendHeader("Access-Control-Allow-Origin", "*");
+    server.sendHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
+    server.sendHeader("Access-Control-Allow-Headers", "Content-Type,Accept");
+    server.sendHeader("Connection", "close");
+    server.sendHeader("Cache-Control", "no-store");
+  }
+
+  void sendJson(int code, String body)
+  {
+    server.client().setNoDelay(true);
+    addCorsHeaders();
+    server.send(code, "application/json", body);
+    yield();
+  }
+
+  String httpMethodName()
+  {
+    switch(server.method())
+    {
+      case HTTP_GET: return "GET";
+      case HTTP_POST: return "POST";
+      case HTTP_OPTIONS: return "OPTIONS";
+      case HTTP_PUT: return "PUT";
+      case HTTP_DELETE: return "DELETE";
+      default: return "OTHER";
+    }
+  }
+
+  void logServerRequest(String route)
+  {
+    lastLocalRequestMillis = millis();
+    Serial.println("[HTTP] " + httpMethodName() + " " + route
+                   + " from=" + server.client().remoteIP().toString()
+                   + " freeHeap=" + String(ESP.getFreeHeap()));
+  }
+
+  bool shouldPrioritizeLocal()
+  {
+    unsigned long now = millis();
+    return now - lastLocalRequestMillis < localPriorityWindowMs ||
+           now < localCommandHoldoffUntilMillis;
+  }
+
+  void holdCloudForLocalCommand(String reason)
+  {
+    localCommandHoldoffUntilMillis = millis() + localPriorityWindowMs;
+    cloudLog("local holdoff reason=" + reason
+             + " untilMs=" + String(localCommandHoldoffUntilMillis));
+  }
+
+  void queueCloudStatusUpload(String reason)
+  {
+    forceCloudStatusUpload = true;
+    cloudLog("queue status reason=" + reason
+             + " pump=" + String(pumpRunning ? "true" : "false")
+             + " tankFull=" + String(tankFull ? "true" : "false")
+             + " lockout=" + String(lockout ? "true" : "false"));
+  }
+
+  void queueCloudAck(String commandId, bool success, String message)
+  {
+    if(commandId.length() == 0)
+    {
+      cloudLog("queue ack skipped: empty command id");
+      return;
+    }
+
+    pendingCloudAck = true;
+    pendingCloudAckSuccess = success;
+    pendingCloudAckCommandId = commandId;
+    pendingCloudAckMessage = message;
+    cloudLog("queue ack commandId=" + commandId
+             + " success=" + String(success ? "true" : "false")
+             + " message=" + message);
   }
 
   void saveRuntime()
@@ -58,12 +167,25 @@
 
   void blinkLed()
   {
-    for(int i=0;i<5;i++)
+    ledBlinkActive = true;
+    ledBlinkOn = false;
+    ledBlinkTransitionsRemaining = 10;
+    ledBlinkLastMillis = 0;
+  }
+
+  void updateBlinkLed()
+  {
+    if(!ledBlinkActive) return;
+    if(ledBlinkLastMillis != 0 && millis() - ledBlinkLastMillis < 200UL) return;
+    ledBlinkLastMillis = millis();
+    ledBlinkOn = !ledBlinkOn;
+    digitalWrite(LED_PIN, ledBlinkOn ? LOW : HIGH);
+    if(ledBlinkTransitionsRemaining > 0) ledBlinkTransitionsRemaining--;
+    if(ledBlinkTransitionsRemaining == 0)
     {
-      digitalWrite(LED_PIN, LOW);
-      delay(200);
+      ledBlinkActive = false;
+      ledBlinkOn = false;
       digitalWrite(LED_PIN, HIGH);
-      delay(200);
     }
   }
 
@@ -111,6 +233,12 @@
     s+=",\"currentRuntimeSeconds\":" + String(current);
     s+=",\"totalRuntimeSeconds\":" + String(totalRuntimeSeconds);
     s+=",\"wifiConnected\":" + String(WiFi.status()==WL_CONNECTED?"true":"false");
+    s+=",\"firmwareVersion\":\"" + String(firmwareVersion) + "\"";
+    s+=",\"cloudOnline\":" + String(cloudOnline?"true":"false");
+    s+=",\"lastCloudCommandStatusCode\":" + String(lastCloudCommandStatusCode);
+    s+=",\"lastCloudStatusCode\":" + String(lastCloudStatusCode);
+    s+=",\"lastCloudAckStatusCode\":" + String(lastCloudAckStatusCode);
+    s+=",\"lastCloudCommandAgeMs\":" + String(lastCloudCommandAttemptMillis == 0 ? 0 : millis() - lastCloudCommandAttemptMillis);
     s+="}";
     return s;
   }
@@ -136,34 +264,45 @@
     return s;
   }
 
-  void handleApiStatus(){ server.send(200,"application/json",jsonStatus()); }
+  void handleApiStatus()
+  {
+    logServerRequest("/api/status");
+    sendJson(200, jsonStatus());
+  }
 
   void handleOn()
   {
+    logServerRequest(server.uri());
     if(lockout)
     {
-      server.send(423,"application/json","{\"error\":\"lockout\"}");
+      sendJson(423, "{\"error\":\"lockout\"}");
       return;
     }
     tankFull=false;
     writePump(true);
-    server.send(200,"application/json","{\"success\":true}");
+    holdCloudForLocalCommand("local pump on");
+    sendJson(200, "{\"success\":true}");
   }
 
   void handleOff()
   {
+    logServerRequest(server.uri());
     writePump(false);
     tankFull=true;
     lockout=true;
     blinkLed();
-    server.send(200,"application/json","{\"success\":true}");
+    holdCloudForLocalCommand("local tank full");
+    queueCloudStatusUpload("local tank full");
+    sendJson(200, "{\"success\":true}");
   }
 
   void handleReset()
   {
+    logServerRequest(server.uri());
     lockout=false;
     tankFull=false;
-    server.send(200,"application/json","{\"success\":true}");
+    holdCloudForLocalCommand("local reset");
+    sendJson(200, "{\"success\":true}");
   }
 
   void markCloudSuccess()
@@ -198,6 +337,13 @@
 
   void logCloudHttpDiagnostics(String label, String url)
   {
+    if(millis() - lastCloudHttpDiagnosticsMillis < diagnosticsIntervalMs)
+    {
+      cloudLog(label + " url=" + url);
+      return;
+    }
+    lastCloudHttpDiagnosticsMillis = millis();
+
     IPAddress resolvedIp;
     bool resolved = WiFi.hostByName(cloudHost, resolvedIp);
 
@@ -236,47 +382,61 @@
     return json.substring(start, end);
   }
 
-  void ackCloudCommand(String commandId, bool success, String message)
+  bool processPendingCloudAck()
   {
-    if(commandId.length() == 0 || !cloudReady())
+    if(!pendingCloudAck || !cloudReady())
     {
-      cloudLog("ack skipped commandId=" + commandId);
-      return;
+      return false;
     }
 
     WiFiClientSecure client;
     client.setInsecure();
-    client.setTimeout(15000);
+    client.setTimeout(cloudHttpTimeoutMs);
    
 
     HTTPClient http;
     http.setReuse(false);
     http.useHTTP10(true);
+    http.setTimeout(cloudHttpTimeoutMs);
     String url = String(cloudBaseUrl) + "/device/ack";
-    cloudLog("POST " + url + " commandId=" + commandId + " success=" + String(success ? "true" : "false"));
+    cloudLog("POST " + url + " commandId=" + pendingCloudAckCommandId
+             + " success=" + String(pendingCloudAckSuccess ? "true" : "false"));
     logCloudHttpDiagnostics("ACK", url);
     bool began = http.begin(client, url); 
     cloudLog("ACK begin=" + String(began ? "true" : "false"));
     if(!began)
     {
       cloudLog("ack begin failed");
-      return;
+      client.stop();
+      return true;
     }
     addCloudHeaders(http);
     String body="{";
     body+="\"deviceId\":\"" + String(deviceId) + "\"";
-    body+=",\"commandId\":\"" + commandId + "\"";
-    body+=",\"success\":" + String(success ? "true" : "false");
-    body+=",\"message\":\"" + message + "\"";
+    body+=",\"commandId\":\"" + pendingCloudAckCommandId + "\"";
+    body+=",\"success\":" + String(pendingCloudAckSuccess ? "true" : "false");
+    body+=",\"message\":\"" + pendingCloudAckMessage + "\"";
     body+="}";
     int code = http.POST(body);
-    String response = http.getString();
-    cloudLog("ACK status=" + String(code) + " response=" + response);
+    lastCloudAckStatusCode = code;
+    server.handleClient();
+    yield();
+    cloudLog("ACK status=" + String(code));
     logCloudHttpResult("ACK", http, code);
     http.end();
     client.stop();
-    if(code >= 200 && code < 300) markCloudSuccess();
-    else markCloudFailure();
+    if(code >= 200 && code < 300)
+    {
+      pendingCloudAck = false;
+      pendingCloudAckCommandId = "";
+      pendingCloudAckMessage = "";
+      markCloudSuccess();
+    }
+    else
+    {
+      markCloudFailure();
+    }
+    return true;
   }
 
   void executeCloudCommand(String commandId, String command)
@@ -287,15 +447,15 @@
       if(lockout)
       {
         cloudLog("PUMP_ON blocked by lockout");
-        ackCloudCommand(commandId, false, "lockout");
-        forceCloudStatusUpload = true;
+        queueCloudAck(commandId, false, "lockout");
+        queueCloudStatusUpload("cloud pump on blocked");
         return;
       }
       tankFull = false;
       cloudLog("calling writePump(true)");
       writePump(true);
-      ackCloudCommand(commandId, true, "pump started");
-      forceCloudStatusUpload = true;
+      queueCloudAck(commandId, true, "pump started");
+      queueCloudStatusUpload("cloud pump on");
       return;
     }
 
@@ -306,8 +466,8 @@
       tankFull = true;
       lockout = true;
       blinkLed();
-      ackCloudCommand(commandId, true, "pump stopped");
-      forceCloudStatusUpload = true;
+      queueCloudAck(commandId, true, "pump stopped");
+      queueCloudStatusUpload("cloud pump off");
       return;
     }
 
@@ -316,32 +476,34 @@
       cloudLog("resetting lockout");
       lockout = false;
       tankFull = false;
-      ackCloudCommand(commandId, true, "lockout reset");
-      forceCloudStatusUpload = true;
+      queueCloudAck(commandId, true, "lockout reset");
+      queueCloudStatusUpload("cloud reset");
       return;
     }
 
     if(command.length() > 0 && command != "NONE")
     {
       cloudLog("unknown command=" + command);
-      ackCloudCommand(commandId, false, "unknown command");
+      queueCloudAck(commandId, false, "unknown command");
     }
   }
 
-  void pollCloudCommand()
+  bool pollCloudCommand()
   {
-    if(!cloudReady()) return;
-    if(millis() - lastCloudCommandMillis < 5000UL) return;
+    if(!cloudReady()) return false;
+    if(millis() - lastCloudCommandMillis < 2000UL) return false;
     lastCloudCommandMillis = millis();
+    lastCloudCommandAttemptMillis = lastCloudCommandMillis;
 
     WiFiClientSecure client;
     client.setInsecure();
-    client.setTimeout(15000);
+    client.setTimeout(cloudHttpTimeoutMs);
     
 
     HTTPClient http;
     http.setReuse(false);
     http.useHTTP10(true);
+    http.setTimeout(cloudHttpTimeoutMs);
     String url = String(cloudBaseUrl) + "/device/command?deviceId=" + String(deviceId);
     cloudLog("GET " + url);
     logCloudHttpDiagnostics("COMMAND", url);
@@ -351,13 +513,16 @@
     {
       cloudLog("command begin failed");
       markCloudFailure();
-      return;
+      client.stop();
+      return true;
     }
     addCloudHeaders(http);
     int code = http.GET();
-    delay(50);
+    lastCloudCommandStatusCode = code;
+    server.handleClient();
     yield();
     String response = http.getString();
+    lastCloudCommandPayload = response;
     cloudLog("COMMAND status=" + String(code) + " response=" + response);
     logCloudHttpResult("COMMAND", http, code);
     if(code >= 200 && code < 300)
@@ -374,23 +539,25 @@
     }
     http.end();
     client.stop();
+    return true;
   }
 
-  void postCloudStatus()
+  bool postCloudStatus()
   {
-    if(!cloudReady()) return;
-    if(!forceCloudStatusUpload && millis() - lastCloudStatusMillis < 10000UL) return;
-    forceCloudStatusUpload = false;
+    if(!cloudReady()) return false;
+    bool periodicDue = millis() - lastCloudStatusMillis >= 10000UL;
+    if(!forceCloudStatusUpload && !periodicDue) return false;
     lastCloudStatusMillis = millis();
 
     WiFiClientSecure client;
     client.setInsecure();
-    client.setTimeout(15000);
+    client.setTimeout(cloudHttpTimeoutMs);
     
 
     HTTPClient http;
     http.setReuse(false);
     http.useHTTP10(true);
+    http.setTimeout(cloudHttpTimeoutMs);
     String url = String(cloudBaseUrl) + "/device/status";
     String body = cloudStatusJson();
     cloudLog("POST " + url + " body=" + body);
@@ -401,29 +568,54 @@
     {
       cloudLog("status begin failed");
       markCloudFailure();
-      return;
+      client.stop();
+      return true;
     }
     addCloudHeaders(http);
     int code = http.POST(body);
-    delay(50);
+    lastCloudStatusCode = code;
+    server.handleClient();
     yield();
-    String response = http.getString();
-    cloudLog("STATUS status=" + String(code) + " response=" + response);
+    cloudLog("STATUS status=" + String(code));
     logCloudHttpResult("STATUS", http, code);
-    if(code >= 200 && code < 300) markCloudSuccess();
-    else markCloudFailure();
+    if(code >= 200 && code < 300)
+    {
+      forceCloudStatusUpload = false;
+      markCloudSuccess();
+    }
+    else
+    {
+      markCloudFailure();
+    }
     http.end();
-    client.stop();  
+    client.stop();
+    return true;
   }
 
   void syncCloud()
   {
-    pollCloudCommand();
-    postCloudStatus();
+    if(shouldPrioritizeLocal()) return;
+    if(millis() - lastCloudWorkMillis < cloudWorkGapMs) return;
+    if(processPendingCloudAck())
+    {
+      lastCloudWorkMillis = millis();
+      return;
+    }
+    if(pollCloudCommand())
+    {
+      lastCloudWorkMillis = millis();
+      return;
+    }
+    if(postCloudStatus())
+    {
+      lastCloudWorkMillis = millis();
+      return;
+    }
   }
 
   void handleDashboard()
   {
+    logServerRequest("/");
     unsigned long current =
       pumpRunning ? (millis()-sessionStartMillis)/1000UL
                   : currentRuntimeSeconds;
@@ -443,61 +635,159 @@
     html+="<a href='/off'><button>STOP PUMP</button></a><br>";
     html+="<a href='/reset'><button>RESET LOCKOUT</button></a>";
     html+="</body></html>";
+    server.client().setNoDelay(true);
+    addCorsHeaders();
     server.send(200,"text/html",html);
+    yield();
   }
 
-  void connectWiFi()
+  void handleOptions()
   {
-      WiFi.mode(WIFI_STA);
+    logServerRequest(server.uri());
+    server.client().setNoDelay(true);
+    addCorsHeaders();
+    server.send(204, "text/plain", "");
+    yield();
+  }
 
-      // Static IP configuration
-      IPAddress dns1(8, 8, 8, 8);
-      IPAddress dns2(1, 1, 1, 1);
+  void handleNotFound()
+  {
+    logServerRequest(server.uri());
+    if(server.method() == HTTP_OPTIONS)
+    {
+      handleOptions();
+      return;
+    }
+    sendJson(404, "{\"error\":\"not_found\"}");
+  }
 
-      if (!WiFi.config(local_IP, gateway, subnet, dns1, dns2))
+  void printHeapDiagnostics(String label)
+  {
+    Serial.println("[Heap] " + label
+                   + " free=" + String(ESP.getFreeHeap())
+                   + " maxBlock=" + String(ESP.getMaxFreeBlockSize())
+                   + " fragmentation=" + String(ESP.getHeapFragmentation()) + "%");
+  }
+
+  void printWiFiDiagnostics(String label)
+  {
+    Serial.println("[WiFi] " + label
+                   + " mode=" + String(WiFi.getMode())
+                   + " status=" + String(WiFi.status())
+                   + " ssid=" + String(ssid)
+                   + " ip=" + WiFi.localIP().toString()
+                   + " gateway=" + WiFi.gatewayIP().toString()
+                   + " subnet=" + WiFi.subnetMask().toString()
+                   + " dns=" + WiFi.dnsIP().toString()
+                   + " rssi=" + String(WiFi.RSSI())
+                   + " attempts=" + String(wifiReconnectAttempts));
+  }
+
+  void printDnsDiagnostics()
+  {
+    IPAddress resolvedIP;
+    bool resolved = WiFi.hostByName(cloudHost, resolvedIP);
+    Serial.println("[DNS] host=" + String(cloudHost)
+                   + " resolved=" + String(resolved ? "true" : "false")
+                   + " ip=" + (resolved ? resolvedIP.toString() : String("0.0.0.0")));
+  }
+
+  void configureWiFi()
+  {
+    WiFi.persistent(false);
+    WiFi.mode(WIFI_STA);
+    WiFi.setAutoReconnect(true);
+    WiFi.hostname("water-tank-package-1");
+
+    Serial.println("[WiFi] configuring static network");
+    Serial.println("[WiFi] local=" + local_IP.toString()
+                   + " gateway=" + gateway.toString()
+                   + " subnet=" + subnet.toString()
+                   + " dns1=" + dns1.toString()
+                   + " dns2=" + dns2.toString());
+
+    if(!WiFi.config(local_IP, gateway, subnet, dns1, dns2))
+    {
+      Serial.println("[WiFi] WiFi.config FAILED");
+    }
+    printWiFiDiagnostics("configured");
+  }
+
+  void beginWiFiConnect(String reason)
+  {
+    lastWiFiAttemptMillis = millis();
+    wifiReconnectAttempts++;
+    Serial.println("[WiFi] begin reason=" + reason
+                   + " ssid=" + String(ssid)
+                   + " attempt=" + String(wifiReconnectAttempts));
+    WiFi.begin(ssid, password);
+    printWiFiDiagnostics("begin");
+    yield();
+  }
+
+  void maintainWiFi()
+  {
+    wl_status_t status = WiFi.status();
+    if(status == WL_CONNECTED)
+    {
+      if(!wifiConnectedReported)
       {
-          cloudLog("WiFi.config() FAILED");
+        wifiConnectedReported = true;
+        wifiReconnectAttempts = 0;
+        Serial.println("[WiFi] connected");
+        printWiFiDiagnostics("connected");
+        printDnsDiagnostics();
       }
+      return;
+    }
 
-      WiFi.begin(ssid, password);
+    if(wifiConnectedReported && status != WL_CONNECTED)
+    {
+      wifiConnectedReported = false;
+      cloudOnline = false;
+      Serial.println("[WiFi] disconnected status=" + String(status));
+      printWiFiDiagnostics("disconnected");
+    }
 
-      cloudLog("Connecting to WiFi...");
+    if(lastWiFiAttemptMillis == 0 || millis() - lastWiFiAttemptMillis >= wifiReconnectIntervalMs)
+    {
+      beginWiFiConnect("periodic_reconnect");
+    }
+  }
 
-      while (WiFi.status() != WL_CONNECTED)
-      {
-          delay(500);
-          Serial.print(".");
-      }
+  void printPeriodicDiagnostics()
+  {
+    if(millis() - lastDiagnosticsMillis < diagnosticsIntervalMs) return;
+    lastDiagnosticsMillis = millis();
+    printWiFiDiagnostics("periodic");
+    printHeapDiagnostics("periodic");
+    if(WiFi.status() == WL_CONNECTED) printDnsDiagnostics();
+  }
 
-      Serial.println();
-      cloudLog("WiFi Connected");
+  void setupServer()
+  {
+    server.on("/", HTTP_GET, handleDashboard);
+    server.on("/", HTTP_OPTIONS, handleOptions);
+    server.on("/on", HTTP_GET, handleOn);
+    server.on("/on", HTTP_OPTIONS, handleOptions);
+    server.on("/off", HTTP_GET, handleOff);
+    server.on("/off", HTTP_OPTIONS, handleOptions);
+    server.on("/reset", HTTP_GET, handleReset);
+    server.on("/reset", HTTP_OPTIONS, handleOptions);
 
-      Serial.print("Local IP    : ");
-      Serial.println(WiFi.localIP());
+    server.on("/api/status", HTTP_GET, handleApiStatus);
+    server.on("/api/status", HTTP_OPTIONS, handleOptions);
+    server.on("/api/pump/on", HTTP_POST, handleOn);
+    server.on("/api/pump/on", HTTP_OPTIONS, handleOptions);
+    server.on("/api/pump/off", HTTP_POST, handleOff);
+    server.on("/api/pump/off", HTTP_OPTIONS, handleOptions);
+    server.on("/api/pump/reset", HTTP_POST, handleReset);
+    server.on("/api/pump/reset", HTTP_OPTIONS, handleOptions);
 
-      Serial.print("Gateway     : ");
-      Serial.println(WiFi.gatewayIP());
-
-      Serial.print("Subnet      : ");
-      Serial.println(WiFi.subnetMask());
-
-      Serial.print("Primary DNS : ");
-      Serial.println(WiFi.dnsIP());
-
-      Serial.print("RSSI        : ");
-      Serial.println(WiFi.RSSI());
-
-      IPAddress resolvedIP;
-
-      if (WiFi.hostByName("water-tank-cloud-backend.onrender.com", resolvedIP))
-      {
-          Serial.print("Render IP   : ");
-          Serial.println(resolvedIP);
-      }
-      else
-      {
-          Serial.println("DNS Resolution FAILED");
-      }
+    server.onNotFound(handleNotFound);
+    server.begin();
+    serverStarted = true;
+    Serial.println("[HTTP] server.begin complete port=80 routes=local+api");
   }
 
   void setup()
@@ -505,6 +795,8 @@
     Serial.begin(115200);
     Serial.println();
     cloudLog("boot firmware=" + String(firmwareVersion) + " deviceId=" + String(deviceId));
+    Serial.println("[Boot] resetReason=" + ESP.getResetReason());
+    Serial.println("[Boot] coreVersion=" + ESP.getCoreVersion());
     EEPROM.begin(64);
     loadRuntime();
 
@@ -514,31 +806,23 @@
     digitalWrite(LED_PIN,HIGH);
     writePump(false);
 
-    connectWiFi();
-    
-
-    server.on("/", handleDashboard);
-    server.on("/on", handleOn);
-    server.on("/off", handleOff);
-    server.on("/reset", handleReset);
-
-    server.on("/api/status", handleApiStatus);
-    server.on("/api/pump/on", HTTP_POST, handleOn);
-    server.on("/api/pump/off", HTTP_POST, handleOff);
-    server.on("/api/pump/reset", HTTP_POST, handleReset);
-
-    server.begin();
+    setupServer();
+    configureWiFi();
+    beginWiFiConnect("boot");
+    printHeapDiagnostics("boot");
   }
 
   void loop()
   {
-    if (WiFi.status() != WL_CONNECTED)
-  {
-      cloudLog("WiFi Lost - Reconnecting");
-
-      connectWiFi();
-  }
-
     server.handleClient();
-    syncCloud();
+    maintainWiFi();
+    server.handleClient();
+    updateBlinkLed();
+    if(WiFi.status() == WL_CONNECTED) syncCloud();
+    printPeriodicDiagnostics();
+    if(millis() - lastYieldMillis >= 20UL)
+    {
+      lastYieldMillis = millis();
+      yield();
+    }
   }

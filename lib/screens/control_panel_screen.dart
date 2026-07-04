@@ -27,16 +27,18 @@ class _ControlPanelScreenState extends ConsumerState<ControlPanelScreen> {
     final canReset = !offline && status?.lockout == true;
 
     return ListView(
-      padding: const EdgeInsets.all(20),
+      padding: const EdgeInsets.fromLTRB(20, 20, 20, 110),
       children: [
         Text(
-          'Control Panel',
-          style: Theme.of(
-            context,
-          ).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w900),
+          'Pump Command Deck',
+          style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+            fontWeight: FontWeight.w900,
+            letterSpacing: -0.6,
+          ),
         ),
         const SizedBox(height: 18),
         GlassCard(
+          padding: const EdgeInsets.all(24),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -51,7 +53,7 @@ class _ControlPanelScreenState extends ConsumerState<ControlPanelScreen> {
                     ? 'Controller is offline. Commands are disabled until reconnection.'
                     : status?.lockout == true
                     ? 'Pump is locked out. Reset lockout before starting.'
-                    : 'Controls are synchronized with the firmware state.',
+                    : 'Local and cloud commands use separate transport paths. The active mode decides which path fires.',
                 style: const TextStyle(color: AppColors.muted),
               ),
             ],
@@ -175,20 +177,44 @@ class _ActionButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return FilledButton.icon(
-      style: FilledButton.styleFrom(
-        backgroundColor: color,
-        foregroundColor: Colors.white,
+    return Container(
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(28),
+        boxShadow: [
+          BoxShadow(
+            color: color.withValues(alpha: enabled ? 0.22 : 0.04),
+            blurRadius: 24,
+            offset: const Offset(0, 16),
+          ),
+        ],
       ),
-      onPressed: enabled ? onPressed : null,
-      icon: busy
-          ? const SizedBox(
-              width: 18,
-              height: 18,
-              child: CircularProgressIndicator(strokeWidth: 2),
-            )
-          : Icon(icon),
-      label: Text(label, style: const TextStyle(fontWeight: FontWeight.w900)),
+      child: FilledButton.icon(
+        style: FilledButton.styleFrom(
+          minimumSize: const Size.fromHeight(68),
+          backgroundColor: color,
+          disabledBackgroundColor: Colors.white.withValues(alpha: 0.10),
+          foregroundColor: Colors.white,
+          disabledForegroundColor: AppColors.muted,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(28),
+          ),
+        ),
+        onPressed: enabled ? onPressed : null,
+        icon: busy
+            ? const SizedBox(
+                width: 18,
+                height: 18,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              )
+            : Icon(icon),
+        label: Text(
+          label,
+          style: const TextStyle(
+            fontWeight: FontWeight.w900,
+            letterSpacing: 1.1,
+          ),
+        ),
+      ),
     );
   }
 }

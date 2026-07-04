@@ -8,6 +8,7 @@ import 'package:water_tank_controller/screens/dashboard_screen.dart';
 import 'package:water_tank_controller/screens/history_screen.dart';
 import 'package:water_tank_controller/screens/settings_screen.dart';
 import 'package:water_tank_controller/screens/statistics_screen.dart';
+import 'package:water_tank_controller/widgets/ocean_background.dart';
 
 class AppShell extends ConsumerStatefulWidget {
   const AppShell({super.key});
@@ -26,17 +27,20 @@ class _AppShellState extends ConsumerState<AppShell> {
     if (_index >= destinations.length) _index = 0;
 
     return Scaffold(
-      body: SafeArea(
-        child: PageTransitionSwitcher(
-          duration: const Duration(milliseconds: 280),
-          transitionBuilder: (child, animation, secondaryAnimation) {
-            return FadeThroughTransition(
-              animation: animation,
-              secondaryAnimation: secondaryAnimation,
-              child: child,
-            );
-          },
-          child: destinations[_index].screen,
+      extendBody: true,
+      body: OceanBackground(
+        child: SafeArea(
+          child: PageTransitionSwitcher(
+            duration: const Duration(milliseconds: 360),
+            transitionBuilder: (child, animation, secondaryAnimation) {
+              return FadeThroughTransition(
+                animation: animation,
+                secondaryAnimation: secondaryAnimation,
+                child: child,
+              );
+            },
+            child: destinations[_index].screen,
+          ),
         ),
       ),
       bottomNavigationBar: NavigationBar(

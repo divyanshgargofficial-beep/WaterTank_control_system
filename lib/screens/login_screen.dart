@@ -132,9 +132,8 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
   Future<void> _login() async {
     final userId = _selectedUserId;
     if (userId == null) return;
-    await ref
-        .read(authControllerProvider.notifier)
-        .login(userId, _passwordController.text);
+    final password = _passwordController.text;
     _passwordController.clear();
+    await ref.read(authControllerProvider.notifier).login(userId, password);
   }
 }

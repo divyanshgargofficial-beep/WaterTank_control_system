@@ -20,6 +20,8 @@ class NotificationPreferences {
       HistoryEventType.tankFull ||
       HistoryEventType.connectionLost ||
       HistoryEventType.connectionRestored ||
+      HistoryEventType.cloudConnected ||
+      HistoryEventType.cloudDisconnected ||
       HistoryEventType.pumpStarted ||
       HistoryEventType.pumpStopped => true,
       HistoryEventType.lockoutActivated ||

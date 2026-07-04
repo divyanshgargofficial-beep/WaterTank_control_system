@@ -4,6 +4,7 @@ class AppSettings {
   const AppSettings({
     required this.controllerIp,
     required this.cloudUrl,
+    required this.connectionPreference,
     required this.refreshIntervalSeconds,
     required this.notificationsEnabled,
     required this.adminNotificationsEnabled,
@@ -17,6 +18,7 @@ class AppSettings {
     return const AppSettings(
       controllerIp: FirmwareContract.defaultControllerIp,
       cloudUrl: 'https://water-tank-cloud-backend.onrender.com',
+      connectionPreference: ConnectionPreference.auto,
       refreshIntervalSeconds: 3,
       notificationsEnabled: true,
       adminNotificationsEnabled: true,
@@ -29,6 +31,7 @@ class AppSettings {
 
   final String controllerIp;
   final String cloudUrl;
+  final ConnectionPreference connectionPreference;
   final int refreshIntervalSeconds;
   final bool notificationsEnabled;
   final bool adminNotificationsEnabled;
@@ -40,6 +43,7 @@ class AppSettings {
   AppSettings copyWith({
     String? controllerIp,
     String? cloudUrl,
+    ConnectionPreference? connectionPreference,
     int? refreshIntervalSeconds,
     bool? notificationsEnabled,
     bool? adminNotificationsEnabled,
@@ -51,6 +55,7 @@ class AppSettings {
     return AppSettings(
       controllerIp: controllerIp ?? this.controllerIp,
       cloudUrl: cloudUrl ?? this.cloudUrl,
+      connectionPreference: connectionPreference ?? this.connectionPreference,
       refreshIntervalSeconds:
           refreshIntervalSeconds ?? this.refreshIntervalSeconds,
       notificationsEnabled: notificationsEnabled ?? this.notificationsEnabled,
@@ -67,3 +72,23 @@ class AppSettings {
 }
 
 enum AppThemeMode { dark, light, system }
+
+enum ConnectionPreference { auto, local, cloud }
+
+extension ConnectionPreferenceLabels on ConnectionPreference {
+  String get label {
+    return switch (this) {
+      ConnectionPreference.auto => 'Auto',
+      ConnectionPreference.local => 'Local',
+      ConnectionPreference.cloud => 'Cloud',
+    };
+  }
+
+  String get description {
+    return switch (this) {
+      ConnectionPreference.auto => 'Prefer local, fallback to cloud',
+      ConnectionPreference.local => 'Local controller only',
+      ConnectionPreference.cloud => 'Render cloud only',
+    };
+  }
+}

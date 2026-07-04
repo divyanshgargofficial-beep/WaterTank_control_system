@@ -29,12 +29,14 @@ class AppTheme {
       surface: const Color(0xFFF7F8FB),
       error: AppColors.danger,
     );
-    final textTheme = GoogleFonts.interTextTheme(ThemeData.light().textTheme);
+    final textTheme = GoogleFonts.spaceGroteskTextTheme(
+      ThemeData.light().textTheme,
+    );
     return _base(
       scheme: scheme,
       textTheme: textTheme,
-      scaffoldBackgroundColor: const Color(0xFFF3F6FA),
-      cardColor: Colors.white.withValues(alpha: highContrast ? 1 : 0.92),
+      scaffoldBackgroundColor: const Color(0xFFDDF8FF),
+      cardColor: Colors.white.withValues(alpha: highContrast ? 1 : 0.74),
     );
   }
 
@@ -47,13 +49,13 @@ class AppTheme {
       surface: AppColors.card,
       error: AppColors.danger,
     );
-    final textTheme = GoogleFonts.interTextTheme(
+    final textTheme = GoogleFonts.spaceGroteskTextTheme(
       ThemeData.dark().textTheme,
-    ).apply(bodyColor: Colors.white, displayColor: Colors.white);
+    ).apply(bodyColor: AppColors.foam, displayColor: AppColors.foam);
     return _base(
       scheme: scheme,
       textTheme: textTheme,
-      scaffoldBackgroundColor: AppColors.background,
+      scaffoldBackgroundColor: Colors.transparent,
       cardColor: AppColors.card.withValues(alpha: highContrast ? 1 : 0.78),
     );
   }
@@ -70,26 +72,51 @@ class AppTheme {
       colorScheme: scheme,
       scaffoldBackgroundColor: scaffoldBackgroundColor,
       textTheme: textTheme,
+      iconTheme: IconThemeData(color: scheme.onSurface),
       cardTheme: CardThemeData(
         color: cardColor,
         elevation: 0,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(28)),
+      ),
+      inputDecorationTheme: InputDecorationTheme(
+        filled: true,
+        fillColor: Colors.white.withValues(alpha: 0.09),
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(20),
+          borderSide: BorderSide(color: Colors.white.withValues(alpha: 0.14)),
+        ),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(20),
+          borderSide: BorderSide(color: Colors.white.withValues(alpha: 0.12)),
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(20),
+          borderSide: const BorderSide(color: AppColors.secondary, width: 1.4),
+        ),
       ),
       navigationBarTheme: NavigationBarThemeData(
-        backgroundColor: cardColor.withValues(alpha: 0.96),
-        indicatorColor: AppColors.primary.withValues(alpha: 0.22),
+        backgroundColor: AppColors.deepSea.withValues(alpha: 0.84),
+        indicatorColor: AppColors.secondary.withValues(alpha: 0.18),
+        elevation: 0,
+        surfaceTintColor: Colors.transparent,
         labelTextStyle: WidgetStateProperty.all(textTheme.labelMedium),
       ),
       filledButtonTheme: FilledButtonThemeData(
         style: FilledButton.styleFrom(
           minimumSize: const Size.fromHeight(54),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+          backgroundColor: AppColors.primary,
+          foregroundColor: AppColors.abyss,
+          textStyle: const TextStyle(fontWeight: FontWeight.w900),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(22),
+          ),
         ),
       ),
       snackBarTheme: SnackBarThemeData(
         behavior: SnackBarBehavior.floating,
-        backgroundColor: scheme.inverseSurface,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+        backgroundColor: AppColors.deepSea,
+        contentTextStyle: const TextStyle(color: AppColors.foam),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
       ),
     );
   }

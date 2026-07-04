@@ -140,6 +140,8 @@ class _TimelineTile extends StatelessWidget {
       HistoryEventType.lockoutReset => AppColors.secondary,
       HistoryEventType.connectionLost => AppColors.warning,
       HistoryEventType.connectionRestored => AppColors.success,
+      HistoryEventType.cloudConnected => AppColors.secondary,
+      HistoryEventType.cloudDisconnected => AppColors.muted,
     };
   }
 }

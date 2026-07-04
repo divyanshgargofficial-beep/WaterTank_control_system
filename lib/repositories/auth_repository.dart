@@ -13,6 +13,8 @@ class AuthRepository {
   static const _usersKey = 'auth.users.v1';
   static const _activeUserKey = 'auth.activeUserId.v1';
   static const _cloudTokenKey = 'auth.cloudToken.v1';
+  static const _cloudEmailPrefix = 'auth.cloudEmail.';
+  static const _cloudPasswordPrefix = 'auth.cloudPassword.';
 
   Future<AuthSession?> restoreSession() async {
     await _ensureDefaults();
@@ -61,6 +63,14 @@ class AuthRepository {
     return _storage.delete(key: _cloudTokenKey);
   }
 
+  Future<String?> readCloudEmail(String userId) {
+    return _storage.read(key: '$_cloudEmailPrefix$userId');
+  }
+
+  Future<String?> readCloudPassword(String userId) {
+    return _storage.read(key: '$_cloudPasswordPrefix$userId');
+  }
+
   Future<void> changePassword(String userId, String password) async {
     final records = await _loadRecords();
     final index = records.indexWhere((item) => item.user.id == userId);
@@ -106,11 +116,40 @@ class AuthRepository {
 
   Future<void> _ensureDefaults() async {
     final raw = await _storage.read(key: _usersKey);
-    if (raw != null) return;
-    await _saveRecords([
-      _record('admin', 'Administrator', UserRole.administrator, 'admin123'),
-      _record('family', 'Family Member', UserRole.familyMember, 'family123'),
-    ]);
+    if (raw == null) {
+      await _saveRecords([
+        _record('admin', 'Administrator', UserRole.administrator, 'admin123'),
+        _record('family', 'Family Member', UserRole.familyMember, 'family123'),
+      ]);
+    }
+    await _ensureCloudCredentialDefaults();
+  }
+
+  Future<void> _ensureCloudCredentialDefaults() async {
+    if (await readCloudEmail('admin') == null) {
+      await _storage.write(
+        key: '${_cloudEmailPrefix}admin',
+        value: 'divyanshgargofficial@gmail.com',
+      );
+    }
+    if (await readCloudPassword('admin') == null) {
+      await _storage.write(
+        key: '${_cloudPasswordPrefix}admin',
+        value: 'aadidev2',
+      );
+    }
+    if (await readCloudEmail('family') == null) {
+      await _storage.write(
+        key: '${_cloudEmailPrefix}family',
+        value: 'divyanshgarg2007@hotmail.com',
+      );
+    }
+    if (await readCloudPassword('family') == null) {
+      await _storage.write(
+        key: '${_cloudPasswordPrefix}family',
+        value: '@devaaditya2007',
+      );
+    }
   }
 
   _CredentialRecord _record(

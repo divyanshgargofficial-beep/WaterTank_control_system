@@ -6,6 +6,8 @@ enum HistoryEventType {
   lockoutReset,
   connectionLost,
   connectionRestored,
+  cloudConnected,
+  cloudDisconnected,
 }
 
 class HistoryEvent {

@@ -6,25 +6,18 @@ import { deviceStatusSchema } from '../models/api.js';
 import { addHistory, addNotification } from './historyService.js';
 
 export async function ensureDefaultDevice() {
-  const deviceTokenHash = await bcrypt.hash(env.DEVICE_TOKEN, 12);
   const existing = await prisma.device.findUnique({
     where: { deviceId: env.DEFAULT_DEVICE_ID }
   });
   if (existing) {
-    return prisma.device.update({
-      where: { id: existing.id },
-      data: {
-        deviceName: env.DEFAULT_DEVICE_NAME,
-        deviceTokenHash
-      }
-    });
+    return existing;
   }
 
   return prisma.device.create({
     data: {
       deviceId: env.DEFAULT_DEVICE_ID,
       deviceName: env.DEFAULT_DEVICE_NAME,
-      deviceTokenHash
+      deviceTokenHash: await bcrypt.hash(env.DEVICE_TOKEN, 12)
     }
   });
 }
@@ -197,18 +190,13 @@ export async function nextCommand(deviceId: string) {
     console.log('[DeviceCommand] device not found', { deviceId });
     return null;
   }
+  await expireStaleActiveCommands(device.id);
   const command = await prisma.command.findFirst({
     where: {
       deviceId: device.id,
-      OR: [
-        { status: CommandStatus.PENDING },
-        {
-          status: CommandStatus.DELIVERED,
-          deliveredAt: { lt: new Date(Date.now() - 15_000) }
-        }
-      ]
+      status: CommandStatus.PENDING
     },
-    orderBy: { createdAt: 'asc' }
+    orderBy: { createdAt: 'desc' }
   });
   if (!command) return null;
   console.log('[DeviceCommand] command selected', {
@@ -222,6 +210,36 @@ export async function nextCommand(deviceId: string) {
     where: { id: command.id },
     data: { status: CommandStatus.DELIVERED, deliveredAt: new Date() }
   });
+}
+
+async function expireStaleActiveCommands(deviceRowId: string) {
+  const staleBefore = new Date(Date.now() - 60_000);
+  const result = await prisma.command.updateMany({
+    where: {
+      deviceId: deviceRowId,
+      OR: [
+        {
+          status: CommandStatus.PENDING,
+          createdAt: { lt: staleBefore }
+        },
+        {
+          status: CommandStatus.DELIVERED,
+          deliveredAt: { lt: new Date(Date.now() - 20_000) }
+        }
+      ]
+    },
+    data: {
+      status: CommandStatus.FAILED,
+      ackedAt: new Date(),
+      error: 'Command expired before controller confirmation'
+    }
+  });
+  if (result.count > 0) {
+    console.log('[DeviceCommand] expired stale active commands', {
+      deviceRowId,
+      count: result.count
+    });
+  }
 }
 
 export async function acknowledgeCommand(devicePublicId: string, commandId: string, success: boolean, message?: string) {
@@ -256,6 +274,28 @@ export async function queueCommand(type: CommandType, userId: string, requestedD
     publicDeviceId: device.deviceId,
     deviceRowId: device.id
   });
+  const superseded = await prisma.command.updateMany({
+    where: {
+      deviceId: device.id,
+      OR: [
+        { status: CommandStatus.PENDING },
+        { status: CommandStatus.DELIVERED }
+      ]
+    },
+    data: {
+      status: CommandStatus.FAILED,
+      ackedAt: new Date(),
+      error: `Superseded by newer ${type} command`
+    }
+  });
+  if (superseded.count > 0) {
+    console.log('[AppCommand] superseded active commands', {
+      type,
+      userId,
+      publicDeviceId: device.deviceId,
+      count: superseded.count
+    });
+  }
   return prisma.command.create({
     data: {
       deviceId: device.id,

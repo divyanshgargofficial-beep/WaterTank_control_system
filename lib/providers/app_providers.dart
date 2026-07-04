@@ -8,6 +8,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:water_tank_controller/models/app_settings.dart';
 import 'package:water_tank_controller/models/app_user.dart';
 import 'package:water_tank_controller/models/auth_state.dart';
+import 'package:water_tank_controller/models/connection_info.dart';
 import 'package:water_tank_controller/models/controller_snapshot.dart';
 import 'package:water_tank_controller/models/controller_status.dart';
 import 'package:water_tank_controller/models/history_event.dart';
@@ -31,9 +32,28 @@ final notificationServiceProvider = Provider<NotificationService>(
 final secureStorageProvider = Provider<FlutterSecureStorage>(
   (ref) => const FlutterSecureStorage(),
 );
-final dioProvider = Provider((ref) {
+final localDioProvider = Provider((ref) {
   final settings = ref.watch(settingsControllerProvider);
-  final timeout = Duration(seconds: settings.connectionTimeoutSeconds);
+  final timeoutSeconds = settings.connectionTimeoutSeconds.clamp(2, 4);
+  final timeout = Duration(seconds: timeoutSeconds);
+  return Dio(
+    BaseOptions(
+      connectTimeout: timeout,
+      receiveTimeout: timeout,
+      sendTimeout: timeout,
+      headers: const {
+        Headers.acceptHeader: 'application/json',
+        'connection': 'close',
+      },
+    ),
+  );
+});
+final cloudDioProvider = Provider((ref) {
+  final settings = ref.watch(settingsControllerProvider);
+  final timeoutSeconds = settings.connectionTimeoutSeconds < 12
+      ? 12
+      : settings.connectionTimeoutSeconds;
+  final timeout = Duration(seconds: timeoutSeconds);
   return Dio(
     BaseOptions(
       connectTimeout: timeout,
@@ -47,16 +67,16 @@ final dioProvider = Provider((ref) {
   );
 });
 final apiServiceProvider = Provider(
-  (ref) => ControllerApiService(ref.watch(dioProvider)),
+  (ref) => ControllerApiService(ref.watch(localDioProvider)),
 );
 final cloudAuthServiceProvider = Provider(
-  (ref) => CloudAuthService(ref.watch(dioProvider)),
+  (ref) => CloudAuthService(ref.watch(cloudDioProvider)),
 );
 final connectionManagerProvider = Provider(
   (ref) => ConnectionManager(
     ref.watch(apiServiceProvider),
     (cloudUrl) => CloudControllerService(
-      ref.watch(dioProvider),
+      ref.watch(cloudDioProvider),
       cloudUrl,
       () => ref.read(authRepositoryProvider).readCloudToken(),
     ),
@@ -135,23 +155,30 @@ class AuthController extends Notifier<AuthState> {
     }
   }
 
-  Future<void> _tryCloudLogin(AppUser user, String password) async {
-    final email = switch (user.role) {
-      UserRole.administrator => 'admin@example.com',
-      UserRole.familyMember => 'family@example.com',
-    };
+  Future<bool> _tryCloudLogin(AppUser user, String password) async {
+    final repository = ref.read(authRepositoryProvider);
+    final email =
+        await repository.readCloudEmail(user.id) ??
+        switch (user.role) {
+          UserRole.administrator => 'divyanshgargofficial@gmail.com',
+          UserRole.familyMember => 'divyanshgarg2007@hotmail.com',
+        };
+    final cloudPassword = await repository.readCloudPassword(user.id);
     try {
       final token = await ref
           .read(cloudAuthServiceProvider)
           .login(
             baseUrl: ref.read(settingsControllerProvider).cloudUrl,
             email: email,
-            password: password,
+            password: cloudPassword?.isNotEmpty == true
+                ? cloudPassword!
+                : password,
           );
-      await ref.read(authRepositoryProvider).saveCloudToken(token);
+      await repository.saveCloudToken(token);
+      return true;
     } catch (error) {
       debugPrint('[CloudAuth] login skipped/failed: $error');
-      await ref.read(authRepositoryProvider).clearCloudToken();
+      return false;
     }
   }
 
@@ -205,11 +232,13 @@ class ControllerController extends Notifier<ControllerSnapshot> {
 
   Timer? _timer;
   ControllerStatus? _previousStatus;
+  ConnectionMode? _previousMode;
   bool _wasOnline = false;
   bool _requestInFlight = false;
   bool _refreshQueued = false;
   bool _commandInFlight = false;
   int _consecutiveFailures = 0;
+  int _requestGeneration = 0;
   bool _disposed = false;
 
   @override
@@ -220,7 +249,7 @@ class ControllerController extends Notifier<ControllerSnapshot> {
       _disposed = true;
       _timer?.cancel();
     });
-    final cached = ref.watch(controllerRepositoryProvider).loadCachedStatus();
+    final cached = ref.read(controllerRepositoryProvider).loadCachedStatus();
     _previousStatus = cached;
     unawaited(Future<void>.microtask(() => refresh(reason: 'initial')));
     return ControllerSnapshot(
@@ -260,6 +289,7 @@ class ControllerController extends Notifier<ControllerSnapshot> {
 
     _timer?.cancel();
     _requestInFlight = true;
+    final generation = _requestGeneration;
     final settings = ref.read(settingsControllerProvider);
     debugPrint(
       '[ControllerPolling] request start reason=$reason ip=${settings.controllerIp}',
@@ -270,6 +300,12 @@ class ControllerController extends Notifier<ControllerSnapshot> {
       final result = await ref
           .read(controllerRepositoryProvider)
           .fetchStatus(settings);
+      if (generation != _requestGeneration) {
+        debugPrint(
+          '[ControllerPolling] ignored stale success reason=$reason generation=$generation current=$_requestGeneration',
+        );
+        return;
+      }
       final status = result.status;
       if (_disposed) return;
       debugPrint(
@@ -283,13 +319,25 @@ class ControllerController extends Notifier<ControllerSnapshot> {
         syncing: false,
         connection: result.connection,
       );
-      await _recordTransitions(_previousStatus, status, restored: restored);
+      await _recordTransitions(
+        _previousStatus,
+        status,
+        restored: restored,
+        connection: result.connection,
+      );
       _previousStatus = status;
+      _previousMode = result.connection.mode;
       if (!_wasOnline) {
         debugPrint('[ControllerPolling] online transition');
       }
       _wasOnline = true;
     } catch (error) {
+      if (generation != _requestGeneration) {
+        debugPrint(
+          '[ControllerPolling] ignored stale failure reason=$reason generation=$generation current=$_requestGeneration error=$error',
+        );
+        return;
+      }
       if (_disposed) return;
       _consecutiveFailures++;
       debugPrint(
@@ -314,14 +362,16 @@ class ControllerController extends Notifier<ControllerSnapshot> {
         errorMessage: _friendlyError(error),
       );
     } finally {
-      _requestInFlight = false;
-      if (_disposed) {
-        _refreshQueued = false;
-      } else if (_refreshQueued) {
-        _refreshQueued = false;
-        unawaited(refresh(reason: 'queued'));
-      } else {
-        _scheduleNextPoll();
+      if (generation == _requestGeneration) {
+        _requestInFlight = false;
+        if (_disposed) {
+          _refreshQueued = false;
+        } else if (_refreshQueued) {
+          _refreshQueued = false;
+          unawaited(refresh(reason: 'queued'));
+        } else {
+          _scheduleNextPoll();
+        }
       }
     }
   }
@@ -363,17 +413,65 @@ class ControllerController extends Notifier<ControllerSnapshot> {
     _timer?.cancel();
     _commandInFlight = true;
     debugPrint('[ControllerPolling] command start $label');
+    Object? commandError;
     try {
-      await _waitForIdleStatusRequest();
-      await command(ref.read(settingsControllerProvider));
+      final settings = ref.read(settingsControllerProvider);
+      if (_shouldWaitForStatusRequest(settings)) {
+        await _waitForIdleStatusRequest();
+      }
+      await command(settings);
+      _applyOptimisticCommandResult(label);
       debugPrint('[ControllerPolling] command success $label');
     } catch (error) {
+      commandError = error;
       debugPrint('[ControllerPolling] command failure $label error=$error');
-      rethrow;
     } finally {
       _commandInFlight = false;
-      await refresh(reason: label);
+      unawaited(_refreshAfterCommand(label));
     }
+    if (commandError != null) {
+      throw commandError;
+    }
+  }
+
+  Future<void> _refreshAfterCommand(String label) async {
+    try {
+      await refresh(reason: label);
+    } catch (error) {
+      debugPrint(
+        '[ControllerPolling] post-command refresh failure label=$label error=$error',
+      );
+    }
+  }
+
+  void _applyOptimisticCommandResult(String label) {
+    final current = state.status;
+    if (current == null) return;
+
+    final updated = switch (label) {
+      'startPump' => current.copyWith(
+        pumpRunning: true,
+        receivedAt: DateTime.now(),
+      ),
+      'stopPump' => current.copyWith(
+        pumpRunning: false,
+        receivedAt: DateTime.now(),
+      ),
+      'resetLockout' => current.copyWith(
+        lockout: false,
+        receivedAt: DateTime.now(),
+      ),
+      _ => null,
+    };
+    if (updated == null) return;
+
+    state = state.copyWith(
+      status: updated,
+      online: true,
+      syncing: true,
+      clearError: true,
+    );
+    _previousStatus = updated;
   }
 
   Future<void> _waitForIdleStatusRequest() async {
@@ -388,10 +486,30 @@ class ControllerController extends Notifier<ControllerSnapshot> {
     }
   }
 
+  void prepareForModeChange() {
+    debugPrint('[ControllerPolling] prepareForModeChange');
+    _requestGeneration++;
+    _timer?.cancel();
+    _requestInFlight = false;
+    _refreshQueued = false;
+    _commandInFlight = false;
+    _consecutiveFailures = 0;
+    state = state.copyWith(syncing: true, connection: null, clearError: true);
+  }
+
+  bool _shouldWaitForStatusRequest(AppSettings settings) {
+    return switch (settings.connectionPreference) {
+      ConnectionPreference.local => false,
+      ConnectionPreference.cloud => false,
+      ConnectionPreference.auto => false,
+    };
+  }
+
   Future<void> _recordTransitions(
     ControllerStatus? previous,
     ControllerStatus current, {
     required bool restored,
+    required ConnectionInfo connection,
   }) async {
     if (restored) {
       await _addEvent(
@@ -399,6 +517,19 @@ class ControllerController extends Notifier<ControllerSnapshot> {
         'Connection restored',
         'Controller Online',
         'Live sync with the controller is restored.',
+      );
+    }
+    if (_previousMode != connection.mode) {
+      final cloudActive = connection.mode == ConnectionMode.cloud;
+      await _addEvent(
+        cloudActive
+            ? HistoryEventType.cloudConnected
+            : HistoryEventType.cloudDisconnected,
+        cloudActive ? 'Cloud connected' : 'Local connected',
+        cloudActive ? 'Cloud Online' : 'Cloud Disconnected',
+        cloudActive
+            ? 'The app is using the Render backend.'
+            : 'The app is using the local controller.',
       );
     }
     if (previous == null) return;
@@ -477,6 +608,9 @@ class ControllerController extends Notifier<ControllerSnapshot> {
 
   String _friendlyError(Object error) {
     if (error is DioException) return 'Unable to reach controller';
+    if (error.toString().contains('Cloud authentication is not available')) {
+      return 'Cloud authentication is not available. Sign out and sign in again.';
+    }
     return error.toString();
   }
 }

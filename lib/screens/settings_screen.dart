@@ -54,7 +54,32 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               _SectionTitle(
                 icon: Icons.hub_rounded,
                 title: 'Connectivity',
-                subtitle: 'Local controller first, cloud fallback.',
+                subtitle: settings.connectionPreference.description,
+              ),
+              const SizedBox(height: 16),
+              SegmentedButton<ConnectionPreference>(
+                segments: const [
+                  ButtonSegment(
+                    value: ConnectionPreference.auto,
+                    label: Text('Auto'),
+                    icon: Icon(Icons.hub_rounded),
+                  ),
+                  ButtonSegment(
+                    value: ConnectionPreference.local,
+                    label: Text('Local'),
+                    icon: Icon(Icons.router_rounded),
+                  ),
+                  ButtonSegment(
+                    value: ConnectionPreference.cloud,
+                    label: Text('Cloud'),
+                    icon: Icon(Icons.cloud_rounded),
+                  ),
+                ],
+                selected: {settings.connectionPreference},
+                onSelectionChanged: (value) => _save(
+                  settings.copyWith(connectionPreference: value.first),
+                  refreshController: true,
+                ),
               ),
               const SizedBox(height: 16),
               TextField(
@@ -87,6 +112,39 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 ),
                 icon: const Icon(Icons.save_rounded),
                 label: const Text('Save Endpoints'),
+              ),
+              const SizedBox(height: 10),
+              OutlinedButton.icon(
+                onPressed: () async {
+                  await _save(
+                    settings.copyWith(
+                      controllerIp: _ipController.text.trim(),
+                      cloudUrl: _cloudController.text.trim(),
+                    ),
+                    refreshController: true,
+                  );
+                  await ref
+                      .read(controllerControllerProvider.notifier)
+                      .refresh(reason: 'test connection');
+                },
+                icon: const Icon(Icons.network_ping_rounded),
+                label: const Text('Test Connection'),
+              ),
+              const SizedBox(height: 14),
+              _InfoLine(
+                label: 'Firmware Version',
+                value:
+                    ref
+                        .watch(controllerControllerProvider)
+                        .status
+                        ?.firmwareVersion ??
+                    'Unknown',
+              ),
+              _InfoLine(
+                label: 'Backend Version',
+                value: settings.cloudUrl.contains('onrender.com')
+                    ? 'Render production'
+                    : 'Custom backend',
               ),
             ],
           ),
@@ -242,8 +300,18 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     );
   }
 
-  Future<void> _save(AppSettings settings) async {
+  Future<void> _save(
+    AppSettings settings, {
+    bool refreshController = false,
+  }) async {
     await ref.read(settingsControllerProvider.notifier).update(settings);
+    ref.read(connectionManagerProvider).resetRouting();
+    ref.read(controllerControllerProvider.notifier).prepareForModeChange();
+    if (refreshController) {
+      await ref
+          .read(controllerControllerProvider.notifier)
+          .refresh(reason: 'settings updated');
+    }
     if (mounted) {
       ScaffoldMessenger.of(
         context,
@@ -327,6 +395,32 @@ class _SectionTitle extends StatelessWidget {
       leading: Icon(icon),
       title: Text(title, style: const TextStyle(fontWeight: FontWeight.w900)),
       subtitle: Text(subtitle),
+    );
+  }
+}
+
+class _InfoLine extends StatelessWidget {
+  const _InfoLine({required this.label, required this.value});
+
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 8),
+      child: Row(
+        children: [
+          Expanded(child: Text(label)),
+          Flexible(
+            child: Text(
+              value,
+              textAlign: TextAlign.end,
+              style: const TextStyle(fontWeight: FontWeight.w700),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

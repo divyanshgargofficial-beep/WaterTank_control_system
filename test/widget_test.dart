@@ -30,7 +30,7 @@ void main() {
     );
 
     await tester.pump();
-    expect(find.text('Water Tank Controller'), findsOneWidget);
+    expect(find.text('Water\nTank Control'), findsOneWidget);
     expect(find.text('Administrator - Local Connection'), findsOneWidget);
   });
 }

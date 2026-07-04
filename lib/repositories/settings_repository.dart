@@ -8,6 +8,7 @@ class SettingsRepository {
 
   static const _ipKey = 'controllerIp';
   static const _cloudUrlKey = 'cloudUrl';
+  static const _connectionPreferenceKey = 'connectionPreference';
   static const _refreshKey = 'refreshIntervalSeconds';
   static const _notificationsKey = 'notificationsEnabled';
   static const _adminNotificationsKey = 'adminNotificationsEnabled';
@@ -18,9 +19,17 @@ class SettingsRepository {
 
   AppSettings load() {
     final defaults = AppSettings.defaults();
+    final cloudUrl = _cloudUrlOrDefault(
+      _prefs.getString(_cloudUrlKey),
+      defaults.cloudUrl,
+    );
     return AppSettings(
       controllerIp: _prefs.getString(_ipKey) ?? defaults.controllerIp,
-      cloudUrl: _prefs.getString(_cloudUrlKey) ?? defaults.cloudUrl,
+      cloudUrl: cloudUrl,
+      connectionPreference: ConnectionPreference.values.firstWhere(
+        (item) => item.name == _prefs.getString(_connectionPreferenceKey),
+        orElse: () => defaults.connectionPreference,
+      ),
       refreshIntervalSeconds:
           (_prefs.getInt(_refreshKey) ?? defaults.refreshIntervalSeconds).clamp(
             3,
@@ -47,7 +56,14 @@ class SettingsRepository {
 
   Future<void> save(AppSettings settings) async {
     await _prefs.setString(_ipKey, settings.controllerIp.trim());
-    await _prefs.setString(_cloudUrlKey, settings.cloudUrl.trim());
+    await _prefs.setString(
+      _cloudUrlKey,
+      _cloudUrlOrDefault(settings.cloudUrl, AppSettings.defaults().cloudUrl),
+    );
+    await _prefs.setString(
+      _connectionPreferenceKey,
+      settings.connectionPreference.name,
+    );
     await _prefs.setInt(
       _refreshKey,
       settings.refreshIntervalSeconds.clamp(3, 60),
@@ -67,5 +83,18 @@ class SettingsRepository {
     );
     await _prefs.setString(_themeModeKey, settings.themeMode.name);
     await _prefs.setBool(_contrastKey, settings.highContrast);
+  }
+
+  String _cloudUrlOrDefault(String? value, String fallback) {
+    final trimmed = value?.trim() ?? '';
+    if (trimmed.isEmpty ||
+        trimmed.contains('localhost') ||
+        trimmed.contains('10.0.2.2') ||
+        trimmed.contains('your-water-tank-backend')) {
+      return fallback;
+    }
+    return trimmed.endsWith('/')
+        ? trimmed.substring(0, trimmed.length - 1)
+        : trimmed;
   }
 }

@@ -36,8 +36,9 @@ class RuntimeDisplay extends StatelessWidget {
             Text(
               formatDurationSeconds(value.round()),
               style: style?.copyWith(
-                fontWeight: FontWeight.w800,
-                letterSpacing: 0,
+                color: AppColors.foam,
+                fontWeight: FontWeight.w900,
+                letterSpacing: -0.8,
               ),
             ),
           ],

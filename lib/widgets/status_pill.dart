@@ -24,9 +24,15 @@ class StatusPill extends StatelessWidget {
         return Container(
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
           decoration: BoxDecoration(
-            color: color.withValues(alpha: 0.14 * value),
+            color: color.withValues(alpha: 0.16 * value),
             borderRadius: BorderRadius.circular(999),
-            border: Border.all(color: color.withValues(alpha: 0.4)),
+            border: Border.all(color: color.withValues(alpha: 0.54)),
+            boxShadow: [
+              BoxShadow(
+                color: color.withValues(alpha: pulse ? 0.22 : 0.08),
+                blurRadius: pulse ? 22 : 12,
+              ),
+            ],
           ),
           child: Row(
             mainAxisSize: MainAxisSize.min,
