@@ -110,6 +110,73 @@ export async function recordStatus(input: unknown) {
     await addNotification(device.id, NotificationType.LOCKOUT_ACTIVATED, 'Lockout Activated', 'Pump start is locked until reset.');
   }
 
+  await settleDeliveredCommandFromStatus(device.id, status);
+
+  return updated;
+}
+
+async function settleDeliveredCommandFromStatus(
+  deviceRowId: string,
+  status: {
+    pumpRunning: boolean;
+    tankFull: boolean;
+    lockout: boolean;
+  }
+) {
+  const command = await prisma.command.findFirst({
+    where: {
+      deviceId: deviceRowId,
+      status: CommandStatus.DELIVERED
+    },
+    orderBy: { createdAt: 'asc' }
+  });
+
+  if (!command) return null;
+
+  let matched = false;
+  let message = '';
+
+  switch (command.type) {
+    case CommandType.PUMP_ON:
+      matched = status.pumpRunning && !status.lockout;
+      message = 'pump started';
+      break;
+    case CommandType.PUMP_OFF:
+      matched = !status.pumpRunning && status.tankFull && status.lockout;
+      message = 'pump stopped';
+      break;
+    case CommandType.RESET_LOCKOUT:
+      matched = !status.lockout && !status.tankFull;
+      message = 'lockout reset';
+      break;
+  }
+
+  if (!matched) return null;
+
+  console.log('[DeviceStatus] auto-acking delivered command from status', {
+    commandId: command.id,
+    type: command.type,
+    statusSnapshot: {
+      pumpRunning: status.pumpRunning,
+      tankFull: status.tankFull,
+      lockout: status.lockout
+    }
+  });
+
+  const updated = await prisma.command.update({
+    where: { id: command.id },
+    data: {
+      status: CommandStatus.ACKED,
+      ackedAt: new Date(),
+      error: null
+    }
+  });
+
+  await addHistory(deviceRowId, HistoryType.COMMAND_ACKED, `Command ${command.type} auto-acked from status`, {
+    commandId: command.id,
+    message
+  });
+
   return updated;
 }
 
