@@ -1,0 +1,26 @@
+# This file tracks properties of this Flutter project.
+# Used by Flutter tool to assess capabilities and perform upgrades etc.
+#
+# This file should be version controlled.
+
+version:
+  revision: 556488a03c301c23f2ab87063462ec5ebcfaf973
+  channel: stable
+
+project_type: app
+
+# Tracks metadata for the flutter migrate command
+migration:
+  platforms:
+    - platform: root
+      create_revision: 556488a03c301c23f2ab87063462ec5ebcfaf973
+      base_revision: 556488a03c301c23f2ab87063462ec5ebcfaf973
+    - platform: android
+      create_revision: 556488a03c301c23f2ab87063462ec5ebcfaf973
+      base_revision: 556488a03c301c23f2ab87063462ec5ebcfaf973
+
+### Provide URLs for issues, comments, etc. regarding this tool
+# Describe a problem with flutter migrate:
+# https://github.com/flutter/flutter/issues/new?template=2_bug.yml
+# Discuss general feedback:
+# https://github.com/flutter/flutter/issues/new?template=3_feature_request.yml
