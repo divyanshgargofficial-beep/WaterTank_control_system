@@ -1,0 +1,81 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+enum Role {
+  ADMIN
+  FAMILY
+}
+
+enum CommandType {
+  PUMP_ON
+  PUMP_OFF
+  RESET_LOCKOUT
+}
+
+enum CommandStatus {
+  PENDING
+  DELIVERED
+  ACKNOWLEDGED
+  FAILED
+}
+
+model User {
+  id        String   @id @default(uuid())
+  email     String   @unique
+  password  String
+  role      Role     @default(FAMILY)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Device {
+  id              String           @id
+  name            String
+  online          Boolean          @default(false)
+  lastSeen        DateTime?
+  status          DeviceStatus?
+  commands        DeviceCommand[]
+  commandHistory  CommandHistory[]
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+}
+
+model DeviceStatus {
+  id                    String   @id @default(uuid())
+  deviceId              String   @unique
+  device                Device   @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  pumpRunning           Boolean  @default(false)
+  tankFull              Boolean  @default(false)
+  lockout               Boolean  @default(false)
+  runtime               Int      @default(0)
+  totalRuntime          Int      @default(0)
+  firmwareVersion       String?
+  wifiRSSI              Int?
+  ipAddress             String?
+  updatedAt             DateTime @updatedAt
+}
+
+model DeviceCommand {
+  id        String        @id @default(uuid())
+  deviceId  String
+  device    Device        @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  command   CommandType
+  status    CommandStatus @default(PENDING)
+  createdAt DateTime      @default(now())
+}
+
+model CommandHistory {
+  id        String      @id @default(uuid())
+  deviceId  String
+  device    Device      @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  command   CommandType
+  success   Boolean
+  message   String?
+  createdAt DateTime    @default(now())
+}
